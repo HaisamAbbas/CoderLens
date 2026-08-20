@@ -1,0 +1,211 @@
+export interface Counts { files: number; symbols: number; commits: number; issues: number; edges: number; }
+export interface Repo {
+  id: number; name: string; url: string; default_branch: string | null;
+  head_sha: string | null; ingested_at: string | null; counts: Counts;
+}
+
+export interface Status {
+  llm: { provider: string | null; model: string; available: boolean };
+  embedding: { provider: string; model: string | null; active: boolean };
+}
+
+export interface RepoJob {
+  id: string; repo_url: string; status: "running" | "done" | "error";
+  step: string; message: string; stats: Record<string, number>; error: string;
+}
+
+export interface ReadingItem { path: string; degree: number; reason: string; }
+export interface Hotspot { path: string; score: number; churn: number; coupling: number; }
+export interface Overview {
+  name: string; url: string; counts: Counts; most_central: string;
+  reading_path: ReadingItem[]; hotspots: Hotspot[];
+}
+
+export interface TreeFile { path: string; category: string; language: string | null; loc: number; symbols: number; }
+export interface SymbolSpan {
+  id: number; name: string; qualified_name: string; kind: string;
+  start_line: number; end_line: number; docstring: string | null;
+}
+export interface FileContent {
+  path: string; language: string | null; category: string; loc: number;
+  content: string; symbols: SymbolSpan[];
+}
+export interface SymbolRef {
+  id: number; qualified_name: string; kind: string; file_path: string; start_line: number;
+  edge: string; confidence: number;
+}
+export interface SymbolDetail {
+  id: number; name: string; qualified_name: string; kind: string; file_path: string;
+  start_line: number; end_line: number; signature: string | null; docstring: string | null;
+  callers: SymbolRef[]; callees: SymbolRef[];
+}
+
+export interface GraphNode {
+  id: string | number; label: string; meta: string; group: string; degree: number;
+  stats: [string, string | number][]; file?: string;
+}
+export interface GraphLink { source: string | number; target: string | number; weight: number; }
+export interface GraphGroup { key: string; label: string; }
+export interface GraphData { nodes: GraphNode[]; links: GraphLink[]; groups: GraphGroup[]; subtitle: string; }
+
+export interface Entrypoint {
+  kind: string; label: string; detail: string; path: string; line: number; symbol_id: number | null;
+}
+export interface FlowNode {
+  id: number; qualified_name: string; name: string; kind: string; file: string; line: number; depth: number;
+}
+export interface FlowEdge { source: number; target: number; confidence: number; }
+export interface FlowData { root: number; nodes: FlowNode[]; edges: FlowEdge[]; }
+
+export interface ImpactNode {
+  id: number; qualified_name: string; kind: string; file: string; line: number; depth: number;
+}
+export interface CoupledFile { a: string; b: string; co_changes: number; strength: number; }
+export interface ImpactRisk { level: "low" | "medium" | "high"; reason: string; }
+export interface Impact {
+  symbol: { id: number; qualified_name: string; kind: string; file: string; line: number };
+  direct_callers: ImpactNode[];
+  transitive_callers: ImpactNode[];
+  test_callers: ImpactNode[];
+  coupled_files: CoupledFile[];
+  is_entrypoint: boolean;
+  fan_in: number;
+  risk: ImpactRisk;
+}
+
+export interface Chip { kind: string; text: string; path: string; }
+export interface StructureItem { label: string; chips: Chip[]; }
+export interface ArchLayer { submodule: string; responsibility: string; evidence: Chip[]; }
+export interface Architecture {
+  repo: string; package: string; summary: string; style: string;
+  structure: StructureItem[]; layers: ArchLayer[];
+  counts: { code_files: number; submodules: number };
+}
+
+export interface CodemapNode {
+  id: number; qualified_name: string; name: string; kind: string;
+  file: string; line: number; step: number; note: string;
+  /** "Physical Code" — a mechanically classified real-world role (validator,
+   *  database, cache, ...) with an icon; fallback when no `concept` is set.
+   *  Optional: nodes added client-side (via symbol expand) compute their own
+   *  with `classifyRole` in Codemap.tsx. */
+  role?: string; icon?: string; role_label?: string;
+  /** The LLM's grounded domain-concept card for this step (e.g. "Chunking" —
+   *  "Splits the document into overlapping windows before embedding.") —
+   *  takes priority over the mechanical role/icon when present. */
+  concept?: string; explainer?: string;
+}
+export interface CodemapEdge { source: number; target: number; confidence: number; }
+export interface Codemap {
+  question: string; title: string; narrative: string;
+  nodes: CodemapNode[]; edges: CodemapEdge[]; curated: boolean;
+}
+
+/** ▶ Play simulation — an illustrative data-flow trace over a codemap
+ *  walkthrough. The STRUCTURE is real (each `node_id` is a real symbol on the
+ *  map); the DATA is representative, generated by the LLM from the actual code
+ *  (or a mechanical, signature-grounded fallback). See analysis/simulation.py. */
+export interface SimState { summary: string; fields: Record<string, unknown>; }
+export interface SimStep {
+  node_id: number;
+  /** Plain-English explanation of what this component contributes to the
+   *  project and how it fits the overall flow — read from the real code. */
+  contribution: string;
+  input: SimState;
+  transformation: string;
+  output: SimState;
+  important_variables: Record<string, unknown>;
+  branch_taken: string | null;
+  confidence: "high" | "representative";
+  notes: string[];
+}
+export interface SimulationTrace {
+  scenario: string;
+  simulated: boolean;
+  /** "llm-simulated" = model-generated values · "mechanical" = grounded from
+   *  signatures only (no LLM). Kept distinct so a future sandbox "Run" can set
+   *  its own source without a UI rebuild. */
+  source: "llm-simulated" | "mechanical";
+  truncated: boolean;
+  steps: SimStep[];
+}
+
+export interface SymbolIndexEntry {
+  id: number; name: string; qualified_name: string; kind: string;
+  path: string; line: number; end_line: number;
+  signature: string; doc: string; callers: number; callers_confident: number;
+}
+/** Client-side resolution maps built from /api/symbols/index. */
+export interface SymbolIndex {
+  list: SymbolIndexEntry[];
+  byName: Map<string, SymbolIndexEntry[]>;
+  byId: Map<number, SymbolIndexEntry>;
+}
+
+export interface WikiChip { kind: string; text: string; path: string; line?: number }
+export type WikiBlock =
+  | { kind: "p"; text: string }
+  | { kind: "md"; text: string }
+  | { kind: "h2"; text: string }
+  | { kind: "list"; items: string[] }
+  | { kind: "chips"; chips: WikiChip[] }
+  | { kind: "table"; columns: string[]; rows: string[][] }
+  | { kind: "code"; title: string; path: string; line: number; lang: string; code: string }
+  | { kind: "diagram"; title: string; mermaid: string };
+export interface WikiSection { key: string; title: string; subtitle: string; blocks: WikiBlock[] }
+export interface Wiki { repo: string; counts: { files: number; symbols: number; edges: number }; sections: WikiSection[] }
+
+export interface FolderRow {
+  dir: string; files: number; symbols: number;
+  fan_in: number; fan_out: number; role: string; heat: number;
+}
+export interface FolderHeat { folders: FolderRow[]; max_fan_in: number; }
+
+export interface Evidence {
+  stream: string; title: string; citation: string; snippet: string;
+  body?: string; score: number; symbol_id?: number; path?: string;
+}
+export interface AskResult { question: string; answer: string; evidence: Evidence[]; }
+export interface InvestigateResult extends AskResult { trace: string[]; }
+export interface SearchResponse { query: string; hits: Evidence[]; }
+
+/** Events from the /api/investigate/stream SSE endpoint. */
+export type StreamEvent =
+  | { type: "step"; message: string }
+  | { type: "answer_delta"; text: string }
+  | { type: "answer"; answer: string }
+  | { type: "evidence"; evidence: Evidence[] }
+  | { type: "error"; message: string };
+
+/** One prior turn, sent back to the agent so a follow-up question can resolve
+ *  references ("it", "that function") against the real preceding answer. */
+export interface HistoryTurn { question: string; answer: string; }
+
+export type Stream = "code" | "doc" | "commit" | "issue";
+
+export interface DeadCodeCandidate {
+  id: number; qualified_name: string; kind: string; path: string; line: number;
+  signature: string; visibility: "private" | "public"; reason: string;
+}
+export interface DeadCode {
+  candidates: DeadCodeCandidate[];
+  counts: { total: number; private: number; public: number };
+}
+
+export interface CommunityMember {
+  id: number; qualified_name: string; kind: string; path: string; line: number;
+}
+export interface Community {
+  label: string; size: number; primary_dir: string; dir_spread: number;
+  members: CommunityMember[];
+}
+export interface Communities { clusters: Community[]; total: number; }
+
+export interface CouplingPair { a: string; b: string; co_changes: number; strength: number; }
+export interface Coupling { pairs: CouplingPair[]; windowed: boolean; window_days: number | null; }
+
+export type ConversationKind = "investigate" | "codemap";
+export interface ConversationSummary { id: number; question: string; created_at: string; }
+export interface ConversationDetail<T = unknown> {
+  id: number; kind: ConversationKind; question: string; result: T; created_at: string;
+}
