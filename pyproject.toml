@@ -1,0 +1,60 @@
+[project]
+name = "codebase-archaeologist"
+version = "0.1.0"
+description = "AI Codebase Archaeologist — investigates a production codebase and answers 'why does this work the way it does?' with evidence-cited answers."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # API
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "httpx>=0.27",
+    # Infra clients
+    "psycopg[binary]>=3.2",
+    "sqlalchemy>=2.0",
+    "opensearch-py>=2.7",
+    "redis>=5.2",
+    # LLM (reasoning / agent) — pluggable provider.
+    "google-genai>=1.0",      # Gemini (default)
+    "anthropic>=0.40",        # Claude (optional)
+    # Ingestion (Phase 1): git history via GitPython.
+    "GitPython>=3.1",
+    # Indexing (Phase 2): AST symbol extraction via tree-sitter (prebuilt wheels).
+    "tree-sitter>=0.23",
+    "tree-sitter-python>=0.23",
+    # Retrieval (Phase 3): semantic search embeddings.
+    "voyageai>=0.3",          # hosted, code-tuned (optional)
+    "fastembed>=0.4",         # local ONNX embeddings, no API / no rate limits
+    # Agent (Phase 6): investigation state machine.
+    "langgraph>=0.2",
+    "networkx>=3.6.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    # Notebooks validate/teach each phase's services before they land in src/ (course paradigm).
+    "ipykernel>=6.29",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/archaeologist"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,82 @@
+# Phase 0 infrastructure: Postgres (metadata + symbol graph),
+# OpenSearch (BM25 + vectors), Redis (cache). Dev config only — security relaxed.
+services:
+  postgres:
+    image: postgres:16
+    container_name: arch_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-archaeologist}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-archaeologist}
+      POSTGRES_DB: ${POSTGRES_DB:-archaeologist}
+    ports:
+      # Host 5433 by default to avoid clashing with a native Postgres on 5432.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-archaeologist}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.0
+    container_name: arch_opensearch
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "${OPENSEARCH_PORT:-9200}:9200"
+      - "9600:9600"
+    volumes:
+      - osdata:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7
+    container_name: arch_redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Local, API-key-free LLM. The app falls back to it automatically when no
+  # hosted key is set (llm_provider=auto) — users never need their own key.
+  # First boot pulls the model (~5 GB); subsequent boots are instant.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: arch_ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollamadata:/root/.ollama
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 4 && ollama pull ${OLLAMA_MODEL:-qwen2.5:7b} && wait"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  pgdata:
+  osdata:
+  redisdata:
+  ollamadata:
