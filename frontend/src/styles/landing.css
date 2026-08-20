@@ -1,0 +1,75 @@
+/* ===== Landing / front page ===== */
+.lp {
+  min-height: 100vh; background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column; position: relative; overflow: hidden;
+}
+.lp::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(56% 44% at 50% 56%,
+    color-mix(in srgb, var(--accent) 22%, transparent), transparent 72%);
+}
+
+.lp-top {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; justify-content: space-between; padding: 22px 30px;
+}
+.lp-brand { display: flex; align-items: center; gap: 11px; font-family: var(--font-display); font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.lp-actions { display: flex; gap: 12px; }
+.lp-round {
+  width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 55%, transparent); color: var(--text-2);
+  display: grid; place-items: center; cursor: pointer; font-size: 17px; transition: color 0.12s, border-color 0.12s;
+}
+.lp-round:hover { color: var(--text); border-color: var(--border-strong); }
+.lp-round svg { width: 18px; height: 18px; }
+
+.lp-hero {
+  position: relative; z-index: 1; flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 0 24px 9vh;
+}
+.lp-title {
+  margin: 0; color: var(--text); font-family: var(--font-display); font-weight: 600; line-height: 0.94;
+  letter-spacing: -0.035em; font-size: clamp(46px, 11.5vw, 168px);
+  text-shadow: 0 2px 40px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.lp-tag {
+  margin: 26px 0 40px; line-height: 1.6; max-width: 42ch;
+  font-size: clamp(15px, 1.6vw, 21px);
+  color: color-mix(in srgb, var(--accent) 52%, var(--text-2));
+}
+
+.lp-search {
+  display: flex; align-items: center; width: min(680px, 92vw);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 6px 6px 6px 26px; box-shadow: var(--shadow-lg);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.lp-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow-lg); }
+.lp-search input { flex: 1; border: none; background: none; outline: none; color: var(--text); font-size: 17px; padding: 16px 0; }
+.lp-search input::placeholder { color: var(--text-3); }
+.lp-search button {
+  width: 48px; height: 48px; border-radius: 50%; border: none; flex-shrink: 0;
+  background: var(--accent); color: var(--accent-ink); cursor: pointer; display: grid; place-items: center;
+}
+.lp-search button:hover { background: var(--accent-hover); }
+.lp-search button svg { width: 19px; height: 19px; }
+
+.lp-suggest { margin-top: 20px; display: flex; align-items: center; gap: 9px; }
+.lp-suggest-label { font-size: 12.5px; color: var(--text-3); }
+.lp-suggest button {
+  font-family: var(--font-mono); font-size: 13px; color: var(--text-2);
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+  border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; cursor: pointer;
+}
+.lp-suggest button:hover { color: var(--text); border-color: var(--border-strong); }
+
+.lp-quick { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin-top: 28px; }
+.lp-quick a {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500;
+  color: var(--text-2); border: 1px solid var(--border); border-radius: 999px; padding: 8px 15px;
+  background: color-mix(in srgb, var(--surface) 45%, transparent); transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.lp-quick a:hover { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.lp-quick a svg { width: 15px; height: 15px; opacity: 0.9; }

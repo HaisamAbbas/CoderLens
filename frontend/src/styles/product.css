@@ -1,0 +1,170 @@
+/* Product polish: empty states, repo onboarding, search, markdown answers. */
+
+/* ---- Empty state (no repo ingested) ---- */
+.empty-state {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 0 24px;
+  background: var(--bg);
+  color: var(--text);
+}
+.empty-state h1 { margin: 14px 0 0; font-size: 24px; letter-spacing: -0.01em; }
+.empty-state p { max-width: 46ch; color: var(--text-2); font-size: 14px; line-height: 1.6; margin: 0 0 10px; }
+
+/* ---- Landing: job progress + messages ---- */
+.lp-msg { margin-top: 14px; font-size: 13px; max-width: 620px; line-height: 1.5; }
+.lp-msg.err { color: var(--danger); }
+.lp-job {
+  margin-top: 16px; width: min(620px, 92vw); text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+.lp-job-step { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--text); }
+.lp-job-sub { margin-top: 6px; font-size: 12px; color: var(--text-3); }
+.lp-retry { margin-left: 10px; font-size: 12px; cursor: pointer; color: var(--accent); background: none; border: none; text-decoration: underline; padding: 0; }
+
+/* ---- Shell: repo meta + refresh ---- */
+.foot .meta {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+  font-size: 11px; color: var(--text-3); flex-wrap: wrap;
+}
+.foot .meta .sha { font-family: var(--font-mono); background: var(--inset); padding: 1px 6px; border-radius: 5px; }
+.foot .refresh {
+  background: none; border: 1px solid var(--border); color: var(--text-2); cursor: pointer;
+  border-radius: var(--r-xs); width: 22px; height: 22px; font-size: 13px; line-height: 1; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.foot .refresh:hover { border-color: var(--accent); color: var(--accent); }
+.foot .refresh:disabled { opacity: 0.5; cursor: default; }
+.foot .syncing { margin-top: 6px; font-size: 11px; color: var(--accent); }
+.foot .ai-chip {
+  margin-top: 8px; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-2); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 9px;
+}
+.foot .ai-chip .ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+.export-link {
+  display: block; margin-top: 10px; font-size: 11.5px; color: var(--text-2); text-decoration: none;
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 7px 10px; text-align: center;
+  transition: border-color 0.12s, color 0.12s;
+}
+.export-link:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- Search page ---- */
+.search-page .ask-box input {
+  width: 100%; box-sizing: border-box; font-size: 14.5px; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text);
+  font-family: inherit;
+}
+.search-page .ask-box input:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: transparent; }
+.chip-row { display: flex; align-items: center; gap: 8px; margin: 14px 0 18px; flex-wrap: wrap; }
+.chip-row .chip {
+  font-size: 12px; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+}
+.chip-row .chip:hover { border-color: var(--accent); }
+.chip-row .chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip-count { font-size: 12px; color: var(--text-3); margin-left: auto; }
+.hit-list { display: flex; flex-direction: column; gap: 8px; }
+.hit {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 11px 14px; transition: border-color 0.12s;
+}
+.hit.clickable { cursor: pointer; }
+.hit.clickable:hover { border-color: var(--accent); }
+.hit-head { display: flex; align-items: center; gap: 9px; font-size: 13px; min-width: 0; }
+.hit-head .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.hit-cit { font-family: var(--font-mono); color: var(--accent); white-space: nowrap; flex-shrink: 0; }
+.hit-title { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit-score { margin-left: auto; color: var(--text-3); font-size: 11px; flex-shrink: 0; }
+.hit-snip { margin-top: 6px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+
+/* ---- Markdown answers ---- */
+.md { line-height: 1.65; font-size: 14px; color: var(--text); }
+.md-p { margin: 0 0 12px; }
+.md-h3 { font-size: 16px; margin: 18px 0 8px; }
+.md-h4 { font-size: 14.5px; margin: 16px 0 6px; }
+.md-h5 { font-size: 13.5px; margin: 14px 0 6px; }
+.md-ul, .md-ol { margin: 0 0 12px; padding-left: 22px; }
+.md-ul li, .md-ol li { margin-bottom: 4px; }
+.md code { font-family: var(--font-mono); font-size: 12.5px; background: var(--inset); padding: 1px 5px; border-radius: var(--r-xs); }
+/* a `symbol` — path:line reference, kept as one visual unit instead of a
+   code chip glued to plain dash-separated text */
+.md-ref { display: inline-flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.md-loc { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); }
+.md a { color: var(--accent); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md-pre {
+  position: relative; background: var(--inset); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 14px 16px; overflow-x: auto; margin: 0 0 14px;
+}
+.md-pre .md-lang {
+  position: absolute; top: 8px; right: 12px; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-3); font-family: var(--font-mono);
+}
+.md-pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.55; }
+.cite-btn {
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid transparent; border-radius: var(--r-xs); padding: 0 4px; margin: 0 1px;
+  font-size: 12px; font-family: var(--font-mono); cursor: pointer;
+}
+.cite-btn:hover { border-color: var(--accent); }
+.cite-mute { color: var(--text-3); font-size: 12px; font-family: var(--font-mono); }
+
+/* ---- Answer chrome: head, actions, feedback ---- */
+.answer { margin-top: 22px; }
+.answer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.answer-head h5 { margin: 0; }
+.ans-actions { display: flex; align-items: center; gap: 6px; }
+.ans-actions .fb { display: inline-flex; gap: 4px; margin-left: 6px; padding-left: 8px; border-left: 1px solid var(--border); }
+.ans-actions .iconbtn.on { color: var(--accent); border-color: var(--accent); }
+.state.err { color: var(--danger); }
+.state.err .btn { margin-left: 10px; }
+
+/* ---- Live investigation steps ---- */
+.steps {
+  margin-top: 18px; display: flex; flex-direction: column; gap: 6px;
+  max-height: 260px; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: var(--r); padding: 12px 14px; background: var(--surface);
+}
+.step { font-size: 12.5px; padding: 6px 10px; border-radius: var(--r-xs); background: var(--inset); }
+.step .t { color: var(--text-2); }
+.step .d { color: var(--text-3); margin-top: 2px; font-family: var(--font-mono); font-size: 11.5px; word-break: break-word; }
+.step.running { border-left: 2px solid var(--accent); }
+
+/* ---- Evidence rows: clickable + flash ---- */
+.ev-row { transition: background 0.15s, box-shadow 0.15s; }
+.ev-row.clickable { cursor: pointer; }
+.ev-row.clickable:hover { background: var(--inset); }
+.ev-row.flash { box-shadow: 0 0 0 2px var(--accent); border-radius: var(--r-xs); background: var(--accent-soft); }
+
+/* ---- Skeletons + error detail ---- */
+.sk {
+  position: relative; overflow: hidden;
+  background: var(--inset); border-radius: var(--r-sm);
+}
+.sk::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent,
+    color-mix(in srgb, var(--surface) 75%, transparent), transparent);
+  animation: sk-shimmer 1.5s infinite;
+}
+@keyframes sk-shimmer { 100% { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .sk::after { animation: none; } }
+.err-detail {
+  margin-top: 6px; font-size: 12px; color: var(--text-3);
+  font-family: var(--font-mono); word-break: break-word; max-width: 72ch;
+}
+
+/* Tour: AI refinement happens in place after the mechanical tour renders */
+.curate-hint {
+  margin-top: 12px; font-size: 12px; color: var(--text-3);
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--accent-soft); color: var(--accent);
+  border-radius: 999px; padding: 4px 11px;
+}

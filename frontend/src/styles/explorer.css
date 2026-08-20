@@ -1,0 +1,169 @@
+/* ===== Explorer workspace: Code Inspector | Graph | AI Explainer ===== */
+.xp {
+  display: grid;
+  grid-template-columns: 384px minmax(0, 1fr) 428px;
+  height: calc(100vh - var(--top-h));
+  min-height: 0;
+}
+.xp-center { position: relative; min-width: 0; background: transparent; }
+.xp-center .graph-stage { height: 100%; }
+
+/* ---- left: Code Inspector ---- */
+.ci { display: flex; flex-direction: column; background: var(--card-bg); border-right: 1px solid var(--card-border); min-height: 0; }
+.ci-head { padding: 13px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.ci-head b { font-size: 13px; letter-spacing: -0.01em; }
+.ci-count { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.ci-list { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.ci-empty { color: var(--text-3); font-size: 13px; line-height: 1.5; padding: 24px 8px; }
+/* flex-shrink:0 matters here — as a flex child of the column-direction .ci-list,
+   a card would otherwise get silently squashed to fit when several are open
+   at once, and since it also clips (overflow:hidden), the squashed-off part
+   — the footer, or worse the expand button's own effect — just vanishes
+   instead of the list scrolling to show it. */
+.ci-card { border: 1px solid var(--card-border); border-radius: var(--r); overflow: hidden; background: var(--surface-2); flex-shrink: 0; }
+.ci-card-head { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.ci-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); flex-shrink: 0; }
+.ci-path { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.ci-explain {
+  flex-shrink: 0; font-size: 10.5px; font-weight: 500; color: var(--accent); background: var(--accent-soft);
+  border: none; border-radius: 999px; padding: 3px 9px; cursor: pointer; white-space: nowrap;
+}
+.ci-explain:hover { filter: brightness(1.08); }
+/* lives in the card header (not the footer) on purpose — with several files
+   open, a footer-only control sits below a tall code block and reads as
+   buried/hidden; the header is always visible the instant a card opens. */
+.ci-expand-btn {
+  flex-shrink: 0; width: 20px; height: 20px; border: 1px solid var(--border); background: var(--card-bg);
+  border-radius: var(--r-xs); color: var(--text-2); cursor: pointer; font-size: 11px; line-height: 1;
+  display: grid; place-items: center; padding: 0;
+}
+.ci-expand-btn:hover { border-color: var(--accent); color: var(--accent); }
+.ci-x {
+  cursor: pointer; color: var(--text-3); font-size: 15px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+  border: none; background: none; font-family: inherit;
+}
+.ci-x:hover { color: var(--text); }
+.ci-loading { padding: 22px; text-align: center; }
+.ci-code { display: flex; max-height: 280px; overflow: auto; background: var(--inset); transition: max-height 0.15s ease; }
+/* inline growth — stays inside the split-panel layout (Code Inspector | Graph
+   | AI Explainer stay all visible together), unlike the header's ⌄ which
+   zooms into a full-screen lightbox that covers the other panels. */
+.ci-code.tall { max-height: 65vh; }
+.ci-code .ci-gutter { margin: 0; padding: 10px 10px 10px 12px; text-align: right; color: var(--text-3); user-select: none; position: sticky; left: 0; background: var(--inset); }
+.ci-code .ci-gutter code { font-family: var(--font-mono); font-size: 11.5px; line-height: 18px; }
+.ci-code .ci-src { margin: 0; padding: 10px 14px; }
+.ci-code .ci-src code { font-family: var(--font-mono); font-size: 11.5px; line-height: 18px; white-space: pre; }
+
+/* footer: two clearly separate, always-in-flow controls — never overlapped
+   by the next card's header, since each card's height is just normal block
+   flow inside the scrolling .ci-list (nothing here is position:absolute or
+   sticky, so a taller card simply pushes the next one further down). */
+.ci-foot-row { display: flex; align-items: center; border-top: 1px solid var(--border); background: var(--surface); }
+.ci-inline-expand {
+  padding: 8px 12px; font-size: 12px; color: var(--text-2); cursor: pointer; flex-shrink: 0;
+  border-right: 1px solid var(--border); white-space: nowrap;
+}
+.ci-inline-expand:hover { background: var(--inset); color: var(--text); }
+.ci-foot { flex: 1; padding: 8px 12px; font-size: 12px; color: var(--accent); cursor: pointer; text-align: right; }
+.ci-foot:hover { background: var(--inset); }
+
+/* the ⌄ expand button brings the file forward over everything, like a
+   lightbox on a thumbnail, instead of growing taller in place among other
+   stacked cards where it was easy to lose among several open files. */
+.ci-lightbox-backdrop {
+  position: fixed; inset: 0; z-index: 200; background: color-mix(in srgb, black 55%, transparent);
+  display: flex; align-items: center; justify-content: center; padding: 40px;
+  animation: ci-fade-in 0.12s ease-out;
+}
+@keyframes ci-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.ci-lightbox {
+  width: min(1000px, 100%); max-height: 100%; display: flex; flex-direction: column;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg), var(--card-glow); overflow: hidden;
+}
+.ci-lightbox-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 14px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.ci-lightbox-head .ci-path { flex: 1; }
+.ci-lightbox-open { font-size: 12px; color: var(--accent); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+.ci-lightbox-open:hover { text-decoration: underline; }
+.ci-lightbox-head .ci-x { font-size: 20px; }
+.ci-lightbox-body { flex: 1; min-height: 0; overflow: auto; background: var(--inset); }
+.ci-lightbox-body .ci-code { max-height: none; overflow: visible; }
+.ci-lightbox-body .ci-loading { padding: 60px; }
+
+/* ---- right: AI Explainer ---- */
+.ax { display: flex; flex-direction: column; background: var(--card-bg); border-left: 1px solid var(--card-border); min-height: 0; }
+.ax-head { padding: 14px 18px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; flex-shrink: 0; }
+.ax-spark { color: var(--accent); margin-right: 6px; }
+.ax-sub { color: var(--text-3); font-weight: 400; }
+.ax-body { flex: 1; overflow: auto; padding: 18px; min-height: 0; }
+.ax-summary { margin: 0 0 16px; font-size: 13.5px; line-height: 1.6; color: var(--text-2); }
+
+.ax-struct { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.ax-srow { display: flex; flex-direction: column; gap: 5px; }
+.ax-slabel { font-size: 13px; font-weight: 600; color: var(--text); }
+.ax-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.chipx {
+  display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11px;
+  padding: 2px 8px; border-radius: 6px; border: none; cursor: pointer;
+  background: var(--accent-soft); color: var(--accent); transition: filter 0.12s;
+}
+.chipx:hover:not(:disabled) { filter: brightness(1.08); }
+.chipx.folder { background: var(--inset); color: var(--text-2); cursor: default; }
+.chipx .ck { opacity: 0.55; font-size: 9.5px; }
+
+.ax-h { margin: 6px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); }
+.ax-style { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); margin-bottom: 14px; }
+.ax-badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); padding: 2px 7px; border-radius: 5px; }
+
+.ax-layer { border: 1px solid var(--card-border); border-radius: var(--r); overflow: hidden; }
+.ax-ltitle { padding: 10px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 12.5px; font-weight: 600; }
+.ax-ltitle code { font-family: var(--font-mono); font-size: 11px; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 5px; margin-left: 6px; }
+.ax-table { width: 100%; border-collapse: collapse; }
+.ax-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); font-weight: 600; padding: 8px 12px; }
+.ax-table td { font-size: 12px; color: var(--text-2); padding: 9px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+.ax-table td.mono { font-family: var(--font-mono); color: var(--text); font-size: 11.5px; }
+
+.ax-answer { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.ax-answer .md { font-size: 13px; line-height: 1.6; }
+.ax-answer .md-p { margin: 0 0 9px; }
+.ax-prose { font-size: 13px; line-height: 1.6; color: var(--text-2); white-space: pre-wrap; }
+.ax-sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.ax-src { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; border: 1px solid var(--border); background: var(--surface-2); border-radius: 6px; padding: 3px 8px; cursor: pointer; color: var(--text-2); }
+.ax-src:hover { border-color: var(--border-strong); color: var(--text); }
+.ax-src i { width: 8px; height: 8px; border-radius: 50%; }
+.ax-src .cit { font-family: var(--font-mono); }
+.ax-src-more { background: none; border-style: dashed; color: var(--text-3); }
+.ax-src-more:hover { color: var(--text); }
+.ax-note { font-size: 12.5px; color: var(--text-3); padding: 10px 0; }
+.ax-note.err { color: var(--danger); display: flex; align-items: center; flex-wrap: wrap; }
+
+/* the inline ask conversation living below the architecture summary */
+.ax-chat-intro { padding-top: 4px; }
+.ax-suggest { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ax-suggest button {
+  text-align: left; font-size: 12px; color: var(--text-2); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; cursor: pointer;
+}
+.ax-suggest button:hover { border-color: var(--border-strong); color: var(--text); }
+.ax-turn { margin-top: 8px; }
+.ax-turn.followup { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.ax-q { font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+
+.ax-ask { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); flex-shrink: 0; background: var(--surface); }
+.ax-ask input { flex: 1; border: 1px solid var(--border); background: var(--inset); border-radius: var(--r-sm); padding: 9px 12px; font-size: 13px; color: var(--text); outline: none; }
+.ax-ask input:focus { border-color: var(--accent); }
+.ax-send { width: 34px; flex-shrink: 0; border: none; border-radius: var(--r-sm); background: var(--accent); color: var(--accent-ink); font-size: 15px; cursor: pointer; }
+.ax-send:disabled { opacity: 0.5; }
+
+@media (max-width: 1100px) {
+  .xp { grid-template-columns: 300px 1fr 340px; }
+}
+@media (max-width: 860px) {
+  .xp { display: block; height: auto; }
+  .ci, .ax { border: none; border-bottom: 1px solid var(--border); }
+  .xp-center { height: 60vh; }
+}

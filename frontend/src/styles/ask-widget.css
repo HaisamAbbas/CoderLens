@@ -1,0 +1,102 @@
+/* ===== Floating "Ask" assistant — available on every feature page ===== */
+.aw-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 70;
+  width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow-lg);
+  display: grid; place-items: center; transition: transform 0.15s, background 0.15s;
+}
+.aw-fab:hover { background: var(--accent-hover); transform: translateY(-1px); }
+.aw-fab.open { background: var(--surface-2); color: var(--text); border: 1px solid var(--card-border); }
+.aw-fab svg { width: 22px; height: 22px; }
+
+.aw-panel {
+  position: fixed; right: 22px; bottom: 86px; z-index: 70;
+  width: min(388px, calc(100vw - 32px)); max-height: min(600px, calc(100vh - 130px));
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg), var(--card-glow);
+  animation: aw-in 0.14s ease-out;
+}
+@keyframes aw-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .aw-panel { animation: none; } }
+
+.aw-head {
+  display: flex; align-items: center; gap: 8px; padding: 12px 14px; flex-shrink: 0;
+  border-bottom: 1px solid var(--card-border); font-size: 13px; font-weight: 600; color: var(--text);
+}
+.aw-head svg { width: 15px; height: 15px; color: var(--accent); }
+.aw-full {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 4px;
+  border: none; background: none; color: var(--accent); font-size: 11.5px; font-weight: 500; cursor: pointer;
+}
+.aw-full:hover { text-decoration: underline; }
+.aw-full svg { width: 11px; height: 11px; color: var(--accent); }
+.aw-new {
+  margin-left: 6px; border: none; background: none; color: var(--text-3); font-size: 11px;
+  font-weight: 500; cursor: pointer; padding: 2px 6px; border-radius: var(--r-xs);
+}
+.aw-new:hover { color: var(--text); background: var(--surface-2); }
+
+.aw-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.aw-turn { display: flex; flex-direction: column; gap: 10px; }
+.aw-followup { padding-top: 12px; border-top: 1px solid var(--border); }
+.aw-q { font-size: 12px; font-weight: 600; color: var(--text); }
+.aw-intro { font-size: 12.5px; color: var(--text-2); line-height: 1.55; margin: 0 0 12px; }
+.aw-suggest { display: flex; flex-direction: column; gap: 6px; }
+.aw-suggest button {
+  text-align: left; font-size: 12px; color: var(--text-2); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; cursor: pointer;
+}
+.aw-suggest button:hover { border-color: var(--border-strong); color: var(--text); }
+
+.aw-steps {
+  display: flex; flex-direction: column; gap: 5px; max-height: 150px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; background: var(--surface);
+  margin-bottom: 12px;
+}
+.aw-step { font-size: 11.5px; color: var(--text-3); }
+.aw-step b { color: var(--text-2); font-weight: 600; }
+.aw-step.on { color: var(--text-2); }
+.aw-step .spin { width: 11px; height: 11px; margin-right: 5px; vertical-align: -2px; }
+
+.aw-error { font-size: 12.5px; color: var(--danger); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.aw-answer { font-size: 12.5px; }
+.aw-answer .md { font-size: 12.5px; line-height: 1.55; }
+.aw-answer .md-p { margin: 0 0 9px; }
+.aw-answer .md-pre { padding: 10px 12px; margin: 0 0 10px; }
+
+.aw-evidence { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.aw-ev { display: flex; align-items: center; gap: 7px; font-size: 11px; padding: 5px 6px; border-radius: var(--r-xs); transition: background 0.12s; }
+.aw-ev.click { cursor: pointer; }
+.aw-ev.click:hover { background: var(--surface-2); }
+.aw-ev.flash { background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+.aw-ev .n { color: var(--text-3); font-family: var(--font-mono); flex-shrink: 0; }
+.aw-ev i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.aw-ev .cit { font-family: var(--font-mono); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aw-ev-more {
+  margin-top: 4px; padding: 6px 8px; text-align: center; font-size: 11px; color: var(--text-2);
+  background: var(--surface-2); border: 1px dashed var(--border); border-radius: var(--r-xs); cursor: pointer;
+}
+.aw-ev-more:hover { border-color: var(--border-strong); color: var(--text); }
+
+.aw-ask {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; flex-shrink: 0;
+  border-top: 1px solid var(--card-border);
+}
+.aw-ask input {
+  flex: 1; border: 1px solid var(--card-border); background: var(--inset); border-radius: var(--r-sm);
+  padding: 8px 11px; font-size: 12.5px; color: var(--text); outline: none; min-width: 0;
+}
+.aw-ask input:focus { border-color: var(--accent); }
+.aw-ask input:disabled { opacity: 0.6; }
+.aw-send {
+  width: 32px; height: 32px; flex-shrink: 0; border: none; border-radius: var(--r-sm);
+  background: var(--accent); color: var(--accent-ink); cursor: pointer; display: grid; place-items: center;
+}
+.aw-send:disabled { opacity: 0.4; cursor: default; }
+.aw-send svg { width: 14px; height: 14px; }
+
+@media (max-width: 560px) {
+  .aw-panel { right: 12px; left: 12px; width: auto; bottom: 80px; }
+  .aw-fab { right: 16px; bottom: 16px; }
+}

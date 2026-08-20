@@ -1,0 +1,143 @@
+/* Design tokens. Warm-neutral grounds, one considered blue accent, IBM Plex.
+   Light is the bare :root; dark is redefined for system-dark and the explicit toggle. */
+:root {
+  color-scheme: light;
+
+  --bg: #f5f4f1;
+  --surface: #ffffff;
+  --surface-2: #faf9f6;
+  --inset: #f0efeb;
+  --border: #e6e4dd;
+  --border-strong: #d6d3ca;
+
+  --text: #17160f;
+  --text-2: #57554c;
+  --text-3: #8a877c;
+
+  --accent: #2f66cc;
+  --accent-hover: #2657ad;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(47, 102, 204, 0.10);
+  --focus: rgba(47, 102, 204, 0.45);
+
+  /* module + evidence-stream hues */
+  --c-core: #2f66cc;
+  --c-sansio: #d9642c;
+  --c-json: #1a9c6f;
+  --c-other: #8a877c;
+  --s-code: #2f66cc;
+  --s-doc: #1a9c6f;
+  --s-commit: #d9642c;
+  --s-issue: #7e5fd0;
+  --s-graph: #bf9412;
+
+  --good: #0d8a44;
+  --warn: #bd8500;
+  --danger: #c34438;
+
+  --r-xs: 5px;
+  --r-sm: 7px;
+  --r: 10px;
+  --r-lg: 14px;
+  --shadow: 0 1px 2px rgba(20, 18, 10, 0.04), 0 3px 14px rgba(20, 18, 10, 0.05);
+  --shadow-lg: 0 2px 6px rgba(20, 18, 10, 0.06), 0 12px 34px rgba(20, 18, 10, 0.09);
+
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --sidebar-w: 236px;
+  --top-h: 56px;
+
+  /* Card treatment — front-page language: a faint accent wash at the top, an
+     accent-tinted border and a soft glow, so surfaces feel lit rather than flat.
+     Defined once; color-mix re-resolves against the active theme's --accent/--surface. */
+  --card-bg: linear-gradient(
+    170deg,
+    color-mix(in srgb, var(--accent) 7%, var(--surface)) 0%,
+    var(--surface) 58%);
+  --card-border: color-mix(in srgb, var(--accent) 15%, var(--border));
+  --card-glow: 0 0 0 1px color-mix(in srgb, var(--accent) 5%, transparent),
+               0 6px 22px -12px color-mix(in srgb, var(--accent) 32%, transparent);
+  --card-border-hover: color-mix(in srgb, var(--accent) 42%, var(--border));
+}
+
+/* Dark palette — same warm-neutral family as light, but with real separation
+   between each surface step. --text is pushed to near-true-white here (dark
+   mode only, light mode's --text is untouched) since body text at a merely
+   "light grey" tone reads as washed-out on dark surfaces even when every
+   other contrast ratio checks out. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0a0a08;
+    --surface: #1c1a15;
+    --surface-2: #26231b;
+    --inset: #0e0d0a;
+    --border: #3c3728;
+    --border-strong: #4f4936;
+
+    --text: #fdfcf9;
+    --text-2: #b6b1a1;
+    --text-3: #8a8574;
+
+    --accent: #6ba3f5;
+    --accent-hover: #8bb6f7;
+    --accent-ink: #0a0a08;
+    --accent-soft: rgba(107, 163, 245, 0.16);
+    --focus: rgba(107, 163, 245, 0.55);
+
+    --c-core: #6ba3f5;
+    --c-sansio: #ec9868;
+    --c-json: #3fc596;
+    --c-other: #8a8574;
+    --s-code: #6ba3f5;
+    --s-doc: #3fc596;
+    --s-commit: #ec9868;
+    --s-issue: #b39af0;
+    --s-graph: #e0bc52;
+
+    --good: #38b56b;
+    --warn: #e0ab2c;
+    --danger: #e57869;
+
+    --card-glow: 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
+                 0 8px 26px -10px color-mix(in srgb, var(--accent) 38%, transparent);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 18px rgba(0, 0, 0, 0.36);
+    --shadow-lg: 0 3px 10px rgba(0, 0, 0, 0.48), 0 18px 44px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0a08;
+  --surface: #1c1a15;
+  --surface-2: #26231b;
+  --inset: #0e0d0a;
+  --border: #3c3728;
+  --border-strong: #4f4936;
+  --text: #fdfcf9;
+  --text-2: #b6b1a1;
+  --text-3: #8a8574;
+  --accent: #6ba3f5;
+  --accent-hover: #8bb6f7;
+  --accent-ink: #0a0a08;
+  --accent-soft: rgba(107, 163, 245, 0.16);
+  --focus: rgba(107, 163, 245, 0.55);
+  --c-core: #6ba3f5;
+  --c-sansio: #ec9868;
+  --c-json: #3fc596;
+  --c-other: #8a8574;
+  --s-code: #6ba3f5;
+  --s-doc: #3fc596;
+  --s-commit: #ec9868;
+  --s-issue: #b39af0;
+  --s-graph: #e0bc52;
+  --good: #38b56b;
+  --warn: #e0ab2c;
+  --danger: #e57869;
+  --card-glow: 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
+               0 8px 26px -10px color-mix(in srgb, var(--accent) 38%, transparent);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 18px rgba(0, 0, 0, 0.36);
+  --shadow-lg: 0 3px 10px rgba(0, 0, 0, 0.48), 0 18px 44px rgba(0, 0, 0, 0.5);
+}

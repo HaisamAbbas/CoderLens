@@ -1,0 +1,188 @@
+/* ===== Start here — generated wiki (DeepWiki-style article) ===== */
+.page.wk { max-width: 1600px; }
+.wk .lede { margin-bottom: 18px; color: var(--text-3); font-size: 14.5px; }
+
+.wk-relevant {
+  border: 1px solid var(--card-border); border-radius: var(--r-lg); background: var(--surface-2);
+  padding: 14px 18px; margin-bottom: 22px;
+}
+.wk-relevant-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); font-weight: 600; margin-bottom: 8px; }
+.wk-relevant ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.wk-relevant button {
+  background: none; border: none; padding: 2px 0; cursor: pointer; text-align: left;
+  font-family: var(--font-mono); font-size: 12px; color: var(--accent);
+}
+.wk-relevant button:hover { text-decoration: underline; }
+
+.wk-layout { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 30px; align-items: start; }
+@media (max-width: 980px) { .wk-layout { grid-template-columns: 1fr; } .wk-toc { display: none; } }
+
+.wk-toc { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; padding-top: 6px; }
+.wk-toc-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); font-weight: 600; margin-bottom: 8px; }
+.wk-toc a { font-size: 12.5px; color: var(--text-3); padding: 5px 0; border-left: 2px solid transparent; padding-left: 10px; }
+.wk-toc a:hover { color: var(--text); border-left-color: var(--border-strong); }
+
+.wk-article {
+  border: 1px solid var(--card-border); border-radius: var(--r-lg); background: var(--card-bg);
+  box-shadow: var(--card-glow); padding: 30px 40px; color: var(--text-2);
+  font-size: 15px; line-height: 1.78; min-width: 0;
+}
+
+/* Prose (LLM markdown) — a touch larger & airier than the app default so the
+   article reads like documentation, not a tooltip. */
+.wk-article .md { font-size: 15px; line-height: 1.78; color: var(--text-2); }
+.wk-article .md-p { margin: 0 0 15px; }
+.wk-article .md-p:last-child { margin-bottom: 0; }
+.wk-article .md strong, .wk-article p b { color: var(--text); font-weight: 600; }
+.wk-article .md code { font-size: 13px; }
+
+/* Reference lists (`symbol` — path:line, one per bullet) read as a loose,
+   default-bulleted list at the article's larger type size — no rhythm, no
+   visual separation between the symbol and its location. A quiet accent dot
+   marker, breathing room between items, and a bordered mono chip for the
+   symbol (matching the chip language used everywhere else in the app, e.g.
+   Codemap's citations) reads as a proper reference list instead. */
+.wk-article .md-ul, .wk-article .md-ol { padding-left: 4px; list-style: none; }
+.wk-article .md-ul li, .wk-article .md-ol li {
+  position: relative; padding-left: 18px; margin-bottom: 10px; line-height: 1.6;
+}
+.wk-article .md-ul li:last-child, .wk-article .md-ol li:last-child { margin-bottom: 0; }
+.wk-article .md-ul li::before {
+  content: ""; position: absolute; left: 2px; top: 0.7em; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent); opacity: 0.55;
+}
+.wk-article .md-ol { counter-reset: wk-ol; }
+.wk-article .md-ol li::before {
+  content: counter(wk-ol); counter-increment: wk-ol; position: absolute; left: 0; top: 0;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--accent);
+}
+.wk-article .md-ref code {
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-weight: 500;
+}
+.wk-article .md-loc { font-size: 11.5px; }
+
+.wk-article > p { margin: 0 0 15px; }
+.wk-h2 {
+  font-size: 19px; font-weight: 700; color: var(--text); margin: 34px 0 14px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border); letter-spacing: -0.01em;
+}
+.wk-h2:first-child { margin-top: 0; }
+
+.wk-list { margin: 0 0 16px; padding-left: 4px; list-style: none; }
+.wk-list li { position: relative; padding-left: 18px; margin-bottom: 10px; line-height: 1.6; }
+.wk-list li:last-child { margin-bottom: 0; }
+.wk-list li::before {
+  content: ""; position: absolute; left: 2px; top: 0.7em; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent); opacity: 0.55;
+}
+.wk-list code { font-family: var(--font-mono); font-size: 13px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-weight: 500; padding: 1px 6px; border-radius: var(--r-xs); }
+.wk-list .md-ref { display: inline-flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.wk-list .md-loc { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); }
+
+.wk-table-wrap { overflow-x: auto; margin: 4px 0 18px; }
+.wk-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.wk-table th {
+  text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3);
+  padding: 7px 14px 7px 0; border-bottom: 1px solid var(--border);
+}
+.wk-table td { padding: 10px 14px 10px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.wk-table td:first-child { font-family: var(--font-mono); color: var(--text); white-space: nowrap; }
+
+.wk-chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 4px 0 18px; }
+.wk-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11.5px;
+  color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 4px 9px; cursor: pointer; transition: border-color 0.12s, color 0.12s;
+}
+.wk-chip:hover { border-color: var(--accent); color: var(--accent); }
+.wk-chip .ck { opacity: 0.6; }
+
+/* ---- Mermaid diagram ---- */
+.wk-diagram {
+  margin: 8px 0 22px; padding: 18px; border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface-2);
+}
+.wk-diagram figcaption {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3);
+  font-weight: 600; margin-bottom: 14px;
+}
+.wk-diagram-canvas { overflow-x: auto; }
+.wk-mermaid { display: flex; justify-content: center; cursor: zoom-in; position: relative; border-radius: var(--r); transition: background 0.12s; }
+.wk-mermaid:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.wk-mermaid svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+.wk-mermaid-src {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); white-space: pre-wrap;
+  background: var(--inset); border-radius: var(--r); padding: 12px; overflow-x: auto;
+}
+
+/* ---- Real source snippet (copy-pasteable) ---- */
+.wk-code {
+  margin: 8px 0 22px; border: 1px solid var(--card-border); border-radius: var(--r-lg);
+  overflow: hidden; background: var(--inset);
+}
+.wk-code-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--card-border);
+}
+.wk-code-loc {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0;
+  background: none; border: none; cursor: pointer; text-align: left; padding: 0;
+}
+.wk-code-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); font-weight: 600; }
+.wk-code-path {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+  max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wk-code-loc:hover .wk-code-name { color: var(--accent); }
+.wk-code-copy {
+  display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: 11.5px; color: var(--text-2); background: var(--card-bg);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px 9px; cursor: pointer;
+}
+.wk-code-copy:hover { border-color: var(--accent); color: var(--accent); }
+.wk-code-copy svg { width: 13px; height: 13px; }
+.wk-code-copy .ok { color: var(--c-ok, #2f9e44); }
+/* No max-height on purpose: capping it (the old `max-height: 460px`) forced
+   the browser to also compute overflow-y as `auto` — a real CSS quirk where
+   one non-`visible` overflow axis drags the other off `visible` too — which
+   spawned a second, independent scrollbar nested inside the page's own
+   scroll for any snippet over ~25 lines (several wiki code blocks run to 47).
+   Letting the block grow with its content and scroll with the page instead
+   is the only way to keep this to one scrollbar. */
+.wk-code-pre {
+  margin: 0; padding: 14px 16px; overflow-x: auto;
+  font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6;
+}
+.wk-code-pre code { background: none; padding: 0; }
+
+.wk-pager { display: flex; justify-content: space-between; margin-top: 22px; gap: 12px; }
+
+/* ---- Diagram lightbox (full-screen zoom/pan viewer) ---- */
+.dlg-overlay {
+  position: fixed; inset: 0; z-index: 1000; background: rgba(10, 12, 16, 0.82);
+  backdrop-filter: blur(3px); display: flex; flex-direction: column;
+}
+.dlg-controls {
+  position: absolute; top: 16px; right: 18px; z-index: 2; display: flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--card-border); border-radius: var(--r);
+  padding: 5px 7px; box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+.dlg-controls button {
+  min-width: 30px; height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--card-bg); color: var(--text); font-size: 15px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.dlg-controls button:hover { border-color: var(--accent); color: var(--accent); }
+.dlg-controls .dlg-close { font-size: 13px; }
+.dlg-pct { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); min-width: 42px; text-align: center; }
+.dlg-stage {
+  flex: 1; overflow: hidden; cursor: grab; touch-action: none;
+}
+.dlg-stage:active { cursor: grabbing; }
+.dlg-canvas { will-change: transform; }
+.dlg-canvas svg { max-width: none !important; height: auto; display: block; }
+.dlg-hint {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  font-size: 11.5px; color: var(--text-3); background: var(--surface-2);
+  border: 1px solid var(--card-border); border-radius: 999px; padding: 5px 14px;
+}

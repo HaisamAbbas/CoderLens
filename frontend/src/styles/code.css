@@ -1,0 +1,164 @@
+/* Syntax colors mapped onto highlight.js classes — theme-aware via tokens. */
+:root {
+  --syn-kw: #7b45c9; --syn-str: #1a8f5f; --syn-com: #8a877c;
+  --syn-num: #b3671a; --syn-fn: #c15a24; --syn-meta: #2f66cc;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --syn-kw: #bfa6f2; --syn-str: #56cd98; --syn-com: #8f8a78;
+    --syn-num: #dd9c5c; --syn-fn: #f0966a; --syn-meta: #8bb8f5;
+  }
+}
+:root[data-theme="dark"] {
+  --syn-kw: #bfa6f2; --syn-str: #56cd98; --syn-com: #8f8a78;
+  --syn-num: #dd9c5c; --syn-fn: #f0966a; --syn-meta: #8bb8f5;
+}
+
+.hljs { color: var(--text); }
+.hljs-keyword, .hljs-literal, .hljs-built_in, .hljs-type { color: var(--syn-kw); }
+.hljs-string, .hljs-attr { color: var(--syn-str); }
+.hljs-comment, .hljs-quote { color: var(--syn-com); font-style: italic; }
+.hljs-number { color: var(--syn-num); }
+.hljs-title, .hljs-title.function_, .hljs-title.class_, .hljs-section, .hljs-name { color: var(--syn-fn); }
+.hljs-meta, .hljs-decorator { color: var(--syn-meta); }
+.hljs-params { color: var(--text); }
+.hljs-property { color: var(--text-2); }
+
+/* code viewer */
+.code-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--card-bg); position: relative; }
+.code-inner { display: flex; min-height: min-content; min-width: min-content; }
+
+/* gutter: per-line rows so definition lines can carry a "used by N" badge */
+.code-inner .gutter {
+  padding: 12px 8px 12px 10px; user-select: none; flex-shrink: 0;
+  border-right: 1px solid var(--border); background: var(--surface-2);
+  position: sticky; left: 0; z-index: 2;
+  display: flex; flex-direction: column;
+}
+.gutter .gl {
+  height: 20px; line-height: 20px; display: flex; align-items: center;
+  justify-content: flex-end; gap: 8px; font-family: var(--font-mono);
+}
+.gutter .gl.on { background: var(--accent-soft); }
+.gutter .gl.lit { background: color-mix(in srgb, var(--warn, #d9a03c) 16%, transparent); }
+.gutter .ln {
+  font-size: 12.5px; color: var(--text-3); min-width: 2ch; text-align: right; font-variant-numeric: tabular-nums;
+}
+button.ln-btn {
+  border: none; background: none; padding: 0 2px 0 6px; cursor: pointer; border-radius: 3px;
+  font: inherit; font-size: 12.5px; color: inherit; line-height: inherit;
+  transition: background 0.1s, color 0.1s;
+}
+button.ln-btn:hover { background: var(--inset); color: var(--text-2); }
+.gl.lit button.ln-btn { color: var(--text); font-weight: 600; }
+/* A definition line carries just a quiet dot by default — the "used by N"
+   count only reveals on hover, so the gutter reads as line numbers, not a
+   wall of pills. The dot's hit target (via padding) still covers a click. */
+.gutter .rb {
+  display: inline-flex; align-items: center; cursor: pointer;
+  border: none; background: none; padding: 3px 1px 3px 3px; border-radius: 4px;
+  font-family: var(--font-mono); line-height: 1; transition: background 0.12s;
+}
+.gutter .rb:hover { background: var(--inset); }
+.gutter .rb-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; opacity: 0.85; transition: opacity 0.12s; }
+.gutter .rb:hover .rb-dot { opacity: 1; }
+.gutter .rb-count {
+  font-size: 10px; color: var(--text-3); max-width: 0; opacity: 0; overflow: hidden;
+  white-space: nowrap; transition: max-width 0.15s ease, opacity 0.12s, margin 0.15s ease;
+}
+.gutter .gl:hover .rb-count, .gutter .rb:hover .rb-count { max-width: 22px; opacity: 1; margin-right: 4px; }
+
+.code-wrap { position: relative; flex: 1; padding: 12px 16px; min-width: 0; }
+.code-wrap pre { margin: 0; }
+.code-wrap code { font-family: var(--font-mono); font-size: 12.5px; line-height: 20px; white-space: pre; }
+.code-wrap .band {
+  position: absolute; left: 0; right: 0; background: var(--accent-soft);
+  border-left: 2px solid var(--accent); pointer-events: none;
+}
+/* hover preview of a whole function — fainter than the selected one */
+.code-wrap .band.ghost {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border-left-color: transparent;
+  transition: top 0.05s linear;
+}
+/* a manually-selected line range (gutter click/shift-click) — a distinct
+   "highlighter pen" tint so it never reads as the same thing as the active
+   symbol band or the hover ghost. */
+.code-wrap .band.select {
+  background: color-mix(in srgb, var(--warn, #d9a03c) 14%, transparent);
+  border-left-color: var(--warn, #d9a03c);
+}
+.hl-pill {
+  position: absolute; right: 10px; display: flex; align-items: center; gap: 2px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  box-shadow: var(--shadow-lg); padding: 3px; z-index: 5; pointer-events: auto;
+  transform: translateY(-100%); margin-top: -4px;
+}
+.hl-pill button {
+  display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-2);
+  background: none; border: none; padding: 5px 9px; border-radius: 4px; cursor: pointer;
+}
+.hl-pill button:hover { background: var(--inset); color: var(--text); }
+.hl-pill button svg { width: 12px; height: 12px; }
+.hl-pill button .ok { color: var(--good); }
+.hl-pill-x { padding: 5px 7px !important; }
+/* underline under the identifier currently hovered (interactive cue) */
+.code-wrap .tok-underline {
+  position: absolute; height: 2px; background: var(--accent);
+  border-radius: 1px; pointer-events: none; opacity: 0.65;
+}
+
+/* hover-to-peek card */
+.peek {
+  position: fixed; z-index: 40; max-height: 60vh; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--r); box-shadow: var(--shadow-lg);
+  font-family: var(--font-sans);
+  animation: peek-in 0.1s ease-out;
+}
+@keyframes peek-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .peek { animation: none; } }
+.peek-multi {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-3); padding: 7px 12px 0;
+}
+.peek-item { padding: 11px 13px; border-top: 1px solid var(--border); }
+.peek-item:first-child, .peek-multi + .peek-item { border-top: none; }
+.peek-item:hover { background: var(--inset); }
+.peek-head { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.peek-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.peek-qn { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); font-weight: 500; }
+.peek-kind {
+  margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-3); background: var(--surface-2); border: 1px solid var(--border);
+  padding: 1px 6px; border-radius: 5px;
+}
+.peek-sig {
+  font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+  margin: 7px 0 0; white-space: pre-wrap; word-break: break-word; line-height: 1.5; cursor: pointer;
+}
+.peek-doc { font-size: 12px; color: var(--text-2); margin: 6px 0 0; line-height: 1.5; cursor: pointer; }
+.peek-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px;
+  font-size: 10.5px; color: var(--text-3);
+}
+.peek-foot > span { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.peek-loc { font-family: var(--font-mono); }
+.peek-refs { color: var(--accent); white-space: nowrap; }
+.peek-explain {
+  flex: none; display: flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: none; border-radius: 999px; padding: 3px 9px; cursor: pointer; transition: background 0.12s;
+}
+.peek-explain:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
+/* code-head breadcrumb */
+.code-head .crumb { display: flex; align-items: center; gap: 7px; font-size: 13px; min-width: 0; }
+.code-head .cdim { color: var(--text-3); font-family: var(--font-mono); font-size: 11.5px; }
+.code-head .csep { color: var(--text-3); }
+.code-head .cfile { color: var(--text); font-weight: 600; }
+.code-head .csym { color: var(--accent); font-family: var(--font-mono); font-size: 12px; }
+

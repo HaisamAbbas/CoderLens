@@ -1,0 +1,50 @@
+/* ===== Dead code ===== */
+.dc-list { display: flex; flex-direction: column; gap: 2px; }
+.dc-row {
+  display: flex; align-items: center; gap: 11px; padding: 10px 8px; border-radius: var(--r-sm);
+  cursor: pointer; border-top: 1px solid var(--border);
+}
+.dc-row:first-child { border-top: none; }
+.dc-row:hover { background: var(--surface-2); }
+.dc-row.muted { opacity: 0.82; }
+.dc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dc-main { flex: 1; min-width: 0; }
+.dc-name { font-family: var(--font-mono); font-size: 13px; color: var(--text); }
+.dc-sig { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-loc { font-size: 11.5px; color: var(--text-3); flex-shrink: 0; }
+
+/* ===== Communities ===== */
+.cl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-top: 14px; }
+.cl-card { display: flex; flex-direction: column; }
+.cl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cl-head h3 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-members { display: flex; flex-direction: column; gap: 1px; margin-top: 12px; max-height: 260px; overflow: auto; }
+.cl-member {
+  display: flex; align-items: center; gap: 9px; padding: 6px 6px; border-radius: var(--r-xs); cursor: pointer;
+}
+.cl-member:hover { background: var(--surface-2); }
+.cl-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.cl-name { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===== History dropdown (Investigate / Codemap) ===== */
+.hm { position: relative; flex-shrink: 0; }
+.hm-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.hm-chev { width: 12px; height: 12px; transition: transform 0.15s; }
+.hm-chev.open { transform: rotate(90deg); }
+.hm-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  width: min(360px, 90vw); max-height: 360px; overflow-y: auto;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg), var(--card-glow); padding: 6px;
+}
+.hm-empty { color: var(--text-3); font-size: 12.5px; padding: 14px 10px; text-align: center; }
+.hm-row { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border-radius: var(--r-sm); cursor: pointer; }
+.hm-row:hover { background: var(--surface-2); }
+.hm-q {
+  font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+}
+.hm-meta { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-3); }
+.hm-del { border: none; background: none; color: var(--text-3); cursor: pointer; padding: 2px; display: flex; border-radius: var(--r-xs); }
+.hm-del:hover { color: var(--danger); background: var(--inset); }
+.hm-del svg { width: 11px; height: 11px; }

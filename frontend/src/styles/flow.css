@@ -1,0 +1,10 @@
+/* ---------- Entrypoints ---------- */
+.ep-groups { display: flex; flex-direction: column; gap: 16px; margin-top: 8px; }
+.ep-group .gh { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 6px; }
+.ep-group .gh b { color: var(--text-2); font-weight: 600; }
+.ep-list { display: flex; flex-direction: column; gap: 2px; }
+.ep { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer; border: 1px solid transparent; }
+.ep:hover { background: var(--surface-2); border-color: var(--border); }
+.ep .tag { font-family: var(--font-mono); font-size: 10px; font-weight: 500; padding: 2px 7px; border-radius: 5px; flex-shrink: 0; letter-spacing: 0.02em; }
+.ep .lab { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep .loc { margin-left: auto; font-size: 11px; color: var(--text-3); flex-shrink: 0; font-variant-numeric: tabular-nums; }

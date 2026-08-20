@@ -1,0 +1,300 @@
+/* ---------- Codemap (self-contained feature) ---------- */
+.cm-ask { display: flex; gap: 10px; margin-top: 18px; transition: margin 0.15s; }
+.cm-ask textarea {
+  flex: 1; resize: none; font-family: inherit; font-size: 14.5px; color: var(--text);
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--r); padding: 13px 15px; min-height: 50px;
+  transition: min-height 0.15s, padding 0.15s;
+}
+.cm-ask textarea:focus { outline: none; border-color: var(--accent); }
+/* Once a map exists, the ask row is a secondary "start over" affordance, not
+   the page's hero input — collapse it to one compact line so it stops
+   competing with the workspace below for attention. */
+.cm-ask.compact { margin-top: 12px; }
+.cm-ask.compact textarea { min-height: 0; padding: 9px 13px; font-size: 13px; }
+.cm-suggest { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.cm-suggest button { font-size: 12.5px; color: var(--text-2); background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+.cm-suggest button:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* The page is a flex column: header/ask/player take their natural height, and
+   .cm-layout (last, flex:1) claims everything left over — no guessed pixel
+   subtraction, so the diagram is never starved by chrome above it growing. */
+.cm-page { display: flex; flex-direction: column; height: calc(100vh - var(--top-h)); min-height: 0; box-sizing: border-box; }
+.cm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-shrink: 0; }
+.cm-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; margin-top: 16px; flex: 1; min-height: 0; }
+
+/* Interactive canvas: content is drawn in a transformed <g> (pan/zoom), so the
+   container itself never scrolls — it clips and shows a grab cursor. */
+.cm-canvas {
+  position: relative; overflow: hidden; min-height: 300px; touch-action: none; cursor: grab;
+  border: 1px solid var(--card-border); border-radius: var(--r-lg); box-shadow: var(--card-glow);
+  /* soft radial accent glow + faint dot grid, so the map floats on depth */
+  background-color: var(--surface-2);
+  background-image:
+    radial-gradient(circle at 50% 20%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 58%),
+    radial-gradient(color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px);
+  background-size: 100% 100%, 26px 26px;
+}
+.cm-canvas:active { cursor: grabbing; }
+.cm-canvas.cm-full { position: fixed; inset: 0; z-index: 1000; border-radius: 0; min-height: 0; }
+.cm-svg { display: block; touch-action: none; }
+
+/* toolbar */
+.cm-tools {
+  position: absolute; top: 12px; right: 14px; z-index: 3; display: flex; align-items: center; gap: 6px;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--r); padding: 5px 7px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.28);
+}
+.cm-tool {
+  min-width: 30px; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text); font-size: 14px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cm-tool:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.cm-tool:disabled { opacity: 0.4; cursor: default; }
+.cm-tool-wide { min-width: auto; font-size: 12.5px; font-weight: 500; }
+.cm-zoom { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); min-width: 40px; text-align: center; }
+.cm-full-hint {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 3;
+  font-size: 11.5px; color: var(--text-3); background: var(--card-bg);
+  border: 1px solid var(--card-border); border-radius: 999px; padding: 5px 14px;
+}
+
+/* the Physical Flow panel, re-rendered inside fullscreen (the canvas covers
+   the whole viewport there, so the sidebar copy is otherwise unreachable) */
+.cm-full-flow {
+  position: absolute; top: 60px; right: 14px; bottom: 14px; z-index: 3; width: 260px;
+  display: flex; flex-direction: column; background: var(--card-bg);
+  border: 1px solid var(--card-border); border-radius: var(--r-lg);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3), var(--card-glow); overflow: hidden;
+}
+.cm-full-flow-head {
+  flex-shrink: 0; padding: 10px 14px; font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.cm-full-flow-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+@media (max-width: 900px) { .cm-full-flow { display: none; } }
+
+/* edges */
+.cm-edge-g { transition: opacity 0.25s ease; }
+.cm-edge-g.dim { opacity: 0.18; }
+.cm-edge { fill: none; stroke: color-mix(in srgb, var(--text-3) 48%, transparent); stroke-width: 1.6; animation: cm-fade 0.5s ease both; }
+.cm-edge.fuzzy { stroke-dasharray: 4 4; stroke: color-mix(in srgb, var(--text-3) 32%, transparent); }
+.cm-edge-flow {
+  fill: none; stroke: var(--accent); stroke-width: 2.25; stroke-dasharray: 5 7; stroke-linecap: round;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 55%, transparent));
+  animation: cm-flow 0.55s linear infinite;
+}
+/* invisible wide hit-target so a thin edge is still easy to click */
+.cm-edge-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; pointer-events: stroke; }
+.cm-edge-g:has(.cm-edge-hit:hover) .cm-edge:not(.cm-edge-flow) { stroke: var(--accent); opacity: 0.9; }
+
+/* nodes — sleek glass cards, one hue per kind */
+.cm-node { cursor: pointer; transition: opacity 0.25s ease; --kc: var(--accent); }
+.cm-node.dim { opacity: 0.24; }
+.cm-box {
+  /* solid, theme-aware fill — never a gradient token (that made fill fall back
+     to black); --surface is #fff in light, dark in dark, with a faint accent tint */
+  fill: color-mix(in srgb, var(--accent) 6%, var(--surface)); stroke: var(--card-border); stroke-width: 1.2;
+  filter: drop-shadow(0 3px 7px rgba(0,0,0,0.16));
+  transition: stroke 0.16s, filter 0.18s;
+}
+.cm-node:hover .cm-box { stroke: var(--kc); filter: drop-shadow(0 6px 13px rgba(0,0,0,0.22)); }
+.cm-node.active .cm-box {
+  stroke: var(--kc); stroke-width: 2;
+  filter: drop-shadow(0 4px 9px rgba(0,0,0,0.20)) drop-shadow(0 0 12px var(--kc));
+}
+.cm-accent { fill: var(--kc); opacity: 0.9; }
+.cm-icon { font-size: 20px; dominant-baseline: middle; }
+.cm-label { font-family: var(--font-mono); font-size: 13px; font-weight: 600; fill: var(--text); }
+.cm-sub { font-family: var(--font-mono); font-size: 10.5px; fill: var(--text-3); }
+.cm-kindtag { font-family: var(--font-sans, system-ui), sans-serif; font-size: 9px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; fill: var(--kc); opacity: 0.85; }
+.cm-in { animation: cm-pop 0.42s cubic-bezier(0.22,1,0.36,1) both; transform-box: fill-box; transform-origin: center; }
+
+@keyframes cm-pop { from { opacity: 0; transform: translateY(9px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes cm-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cm-flow { to { stroke-dashoffset: -12; } }
+@media (prefers-reduced-motion: reduce) {
+  .cm-in, .cm-edge { animation: none; }
+  .cm-edge-flow { animation: none; }
+}
+
+/* scrubber */
+.cm-scrub { flex: 1; min-width: 80px; accent-color: var(--accent); cursor: pointer; height: 4px; }
+
+.cm-narr {
+  display: flex; flex-direction: column;
+  background: var(--card-bg); border: 1px solid var(--card-border);
+  border-radius: var(--r-lg); height: 100%; min-height: 0; overflow: hidden;
+}
+.cm-narr h3 { margin: 0 0 8px; font-size: 14.5px; }
+.cm-narr .prose { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.muted-sm { font-size: 12.5px; color: var(--text-3); line-height: 1.5; }
+
+/* Sidebar tabs — "Steps" (the physical-flow walkthrough, default) and
+   "Overview" (title/narrative/extend) used to always stack on top of each
+   other; splitting them into tabs is most of what un-crams this sidebar. */
+.cm-tabs { display: flex; gap: 2px; padding: 8px 8px 0; flex-shrink: 0; }
+.cm-tab {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: none; background: none; color: var(--text-3); font-size: 12.5px; font-weight: 600;
+  padding: 9px 8px; border-radius: var(--r-sm) var(--r-sm) 0 0; cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.cm-tab:hover { color: var(--text-2); }
+.cm-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.cm-tab-count {
+  font-size: 10.5px; font-weight: 700; color: var(--text-3); background: var(--surface-2);
+  border-radius: 999px; padding: 1px 6px; font-variant-numeric: tabular-nums;
+}
+.cm-tab.active .cm-tab-count { color: var(--accent); }
+.cm-narr > .cm-flow { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
+.cm-tab-panel { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; }
+/* ---- "Physical Code" flow — the walkthrough as numbered infographic
+   panels (real AI-illustrated scene + real HTML title/caption), moving
+   vertically through the system like a whiteboard diagram. ---- */
+.cm-flow { display: flex; flex-direction: column; align-items: center; }
+.cm-flow-item { display: flex; flex-direction: column; align-items: center; width: 100%; }
+.cm-flow-card {
+  display: flex; flex-direction: column; width: 100%; padding: 0; overflow: hidden; text-align: left;
+  border-radius: var(--r); font-family: inherit;
+  border: 1px solid var(--card-border); background: var(--card-bg); cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.cm-flow-card:hover { border-color: var(--border-strong); }
+.cm-flow-card.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.cm-flow-body { display: flex; flex-direction: column; gap: 3px; padding: 9px 11px; }
+.cm-flow-toprow { display: flex; align-items: center; gap: 8px; }
+.cm-flow-num {
+  flex-shrink: 0; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
+  font-size: 10px; font-weight: 700; display: grid; place-items: center; font-variant-numeric: tabular-nums;
+}
+.cm-flow-card.active .cm-flow-num { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.cm-flow-title { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.cm-flow-card.active .cm-flow-title { color: var(--accent); }
+.cm-flow-explainer {
+  font-size: 11px; color: var(--text-2); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cm-flow-loc { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+
+.cm-flow-connector { display: flex; flex-direction: column; align-items: center; height: 15px; }
+.cm-flow-line { width: 2px; flex: 1; background: var(--border); }
+.cm-flow-connector.done .cm-flow-line { background: var(--accent); }
+.cm-flow-connector.active .cm-flow-line {
+  background: linear-gradient(var(--accent), var(--border));
+  animation: cm-flow-pulse 1.1s ease-in-out infinite;
+}
+.cm-flow-arrow { font-size: 12px; line-height: 1; color: var(--border-strong); }
+.cm-flow-connector.done .cm-flow-arrow, .cm-flow-connector.active .cm-flow-arrow { color: var(--accent); }
+@keyframes cm-flow-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .cm-flow-connector.active .cm-flow-line { animation: none; opacity: 0.85; } }
+
+/* ---- walkthrough player: one clean toolbar row, transport controls grouped
+   together, the ⓘ affordance replacing what used to be two permanent banners
+   of small print sitting above it ---- */
+.cm-player { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 8px 10px; border: 1px solid var(--card-border); border-radius: var(--r); background: var(--card-bg); }
+.cm-transport { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.cm-play {
+  border: none; background: var(--accent); color: var(--accent-ink); border-radius: var(--r-sm);
+  width: 34px; height: 30px; font-size: 13px; cursor: pointer; flex-shrink: 0;
+  display: grid; place-items: center;
+}
+.cm-play:hover { background: var(--accent-hover, var(--accent)); }
+.cm-nav { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: var(--r-sm); width: 30px; height: 30px; cursor: pointer; font-size: 15px; line-height: 1; flex-shrink: 0; }
+.cm-nav:hover:not(:disabled) { border-color: var(--border-strong); }
+.cm-nav:disabled { opacity: 0.35; cursor: default; }
+.cm-progress { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; flex-shrink: 0; min-width: 46px; }
+
+/* the info affordance — one small button, everything that used to be two
+   permanent banners now lives in a popover shown on hover/focus */
+.cm-info { position: relative; flex-shrink: 0; }
+.cm-info-btn {
+  width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text-3); font-size: 13px; cursor: pointer; display: grid; place-items: center;
+}
+.cm-info-btn:hover, .cm-info:focus-within .cm-info-btn { border-color: var(--accent); color: var(--accent); }
+.cm-info-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; width: 320px;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--r);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.28); padding: 12px 14px;
+  font-size: 12.5px; line-height: 1.55; color: var(--text-2);
+  opacity: 0; visibility: hidden; transform: translateY(-4px); transition: opacity 0.12s, transform 0.12s;
+}
+.cm-info:hover .cm-info-pop, .cm-info:focus-within .cm-info-pop { opacity: 1; visibility: visible; transform: none; }
+.cm-info-pop p { margin: 0 0 8px; }
+.cm-info-pop p:last-child { margin-bottom: 0; }
+.cm-info-pop p.muted { color: var(--text-3); font-size: 11.5px; }
+.cm-info-pop b { color: var(--text); }
+.cm-dot { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--text-3); vertical-align: middle; margin: 0 2px; }
+.cm-dot.dashed { border-top-style: dashed; }
+
+.cm-main { position: relative; display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
+
+/* Two stacked panes (diagram + output), each framed with its own header. The
+   `pane-*` class on .cm-main decides which one is expanded. */
+.cm-pane { display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+  border: 1px solid var(--card-border); border-radius: var(--r); background: var(--card-bg); }
+.cm-pane-body { flex: 1; min-height: 0; position: relative; }
+.cm-pane-body .cm-canvas { height: 100%; min-height: 0; border: none; border-radius: 0; box-shadow: none; }
+
+/* split (default): diagram takes the room, output is capped + scrolls */
+.cm-main.pane-split .cm-pane-diagram { flex: 1 1 auto; min-height: 240px; }
+.cm-main.pane-split .cm-dock-body { max-height: 42vh; }
+/* diagram maximized: output collapses to just its header */
+.cm-main.pane-diagram .cm-pane-diagram { flex: 1 1 auto; min-height: 0; }
+.cm-main.pane-diagram .cm-dock { flex: 0 0 auto; }
+.cm-main.pane-diagram .cm-dock-body { display: none; }
+/* output maximized: diagram collapses to just its header */
+.cm-main.pane-output .cm-pane-diagram { flex: 0 0 auto; }
+.cm-main.pane-output .cm-pane-diagram .cm-pane-body { display: none; }
+.cm-main.pane-output .cm-dock { flex: 1 1 auto; min-height: 0; }
+.cm-main.pane-output .cm-dock-body { flex: 1; max-height: none; }
+
+.cm-strip { border: 1px solid var(--card-border); border-radius: var(--r); overflow: hidden; background: var(--card-bg); flex-shrink: 0; }
+.cm-strip-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.cm-strip-head .ci-name { font-family: var(--font-mono); font-size: 12.5px; }
+.cm-strip-head .ci-path { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); }
+.cm-strip-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.cm-strip-open { color: var(--accent); font-size: 12px; cursor: pointer; flex-shrink: 0; }
+.cm-strip-code { display: flex; position: relative; max-height: 210px; overflow: auto; background: var(--inset); }
+.cm-strip-code .band { position: absolute; left: 0; right: 0; height: 18px; background: var(--accent-soft); border-left: 2px solid var(--accent); pointer-events: none; }
+.cm-strip-code .ci-gutter { position: sticky; left: 0; background: var(--inset); }
+.cm-strip-src { margin: 0; padding: 10px 14px; }
+.cm-strip-src code { font-family: var(--font-mono); font-size: 11.5px; line-height: 18px; white-space: pre; }
+
+/* ---- extend map (follow-up that grows the graph) ---- */
+.cm-extend { margin: 14px 0; padding: 12px; border: 1px solid var(--card-border); border-radius: var(--r); background: var(--surface-2); }
+.cm-extend-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); font-weight: 600; margin-bottom: 8px; }
+.cm-extend-row { display: flex; gap: 6px; }
+.cm-extend-row input {
+  flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); background: var(--inset);
+  border: 1px solid var(--card-border); border-radius: var(--r-sm); padding: 7px 9px;
+}
+.cm-extend-row input:focus { outline: none; border-color: var(--accent); }
+.cm-extend-note { margin-top: 8px; font-size: 12px; color: var(--text-2); line-height: 1.5; }
+
+/* ---- edge-explain popover (fixed, positioned near the clicked edge) ---- */
+.cm-edge-popup {
+  position: fixed; z-index: 500; width: 300px;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--r);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3), var(--card-glow);
+  animation: cm-pop 0.18s cubic-bezier(0.22,1,0.36,1) both;
+}
+.cm-edge-popup-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.cm-edge-popup-x { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 12px; padding: 2px; }
+.cm-edge-popup-x:hover { color: var(--text); }
+.cm-edge-popup-body { padding: 10px 12px; font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.cm-edge-popup-body.err { color: var(--danger); }
+.cm-edge-popup-body .spin { width: 12px; height: 12px; margin-right: 5px; vertical-align: -2px; }
+
+@media (max-width: 900px) {
+  .cm-page { height: auto; }
+  .cm-layout { grid-template-columns: 1fr; flex: none; }
+  .cm-main, .cm-narr { height: auto; min-height: 320px; }
+}
