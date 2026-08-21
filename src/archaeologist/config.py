@@ -57,13 +57,21 @@ class Settings(BaseSettings):
     ollama_model: str = Field(default="qwen2.5:7b")
 
     # --- Embeddings (provider decided in Phase 3; Anthropic has no embeddings API) ---
-    # "local" = fastembed (offline, no key); "voyage" = hosted, code-tuned.
+    # "local" = fastembed (offline, no key, but loads a real ONNX model into
+    # this process's memory — tight on a free-tier 512MB deploy); "voyage" =
+    # hosted, code-tuned, but free tier is brutally rate-limited; "alibaba" =
+    # hosted via the same Model Studio account already used for the LLM, no
+    # model loaded in-process. Reuses alibaba_api_key/alibaba_base_url above.
     embedding_provider: str = Field(default="local")
     local_embedding_model: str = Field(default="BAAI/bge-small-en-v1.5")
     local_embedding_dim: int = Field(default=384)
     voyage_api_key: str = Field(default="")
     voyage_model: str = Field(default="voyage-code-3")
     voyage_dim: int = Field(default=1024)
+    # text-embedding-v2 is access-denied on at least some workspaces (confirmed
+    # live); v3/v4 both work and default to 1024 dims (Matryoshka-configurable).
+    alibaba_embedding_model: str = Field(default="text-embedding-v3")
+    alibaba_embedding_dim: int = Field(default=1024)
     # Seconds to wait between embedding batches. Free tier (no payment method) is
     # 3 RPM / 10K TPM — set ~42. With a payment method, leave 0 (standard limits).
     voyage_request_delay: float = Field(default=0.0)
@@ -108,8 +116,11 @@ class Settings(BaseSettings):
     def embedding_dim(self) -> int:
         """Vector dimension of the active provider — keeps index mappings correct
         even in BM25-only (no-embeddings) mode."""
-        if self.embedding_provider.lower() == "voyage":
+        provider = self.embedding_provider.lower()
+        if provider == "voyage":
             return self.voyage_dim
+        if provider == "alibaba":
+            return self.alibaba_embedding_dim
         return self.local_embedding_dim
 
     @property
