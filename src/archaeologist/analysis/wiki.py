@@ -116,7 +116,11 @@ def _leaf(qn: str) -> str:
     seg = [p for p in q.split(".") if p]
     if len(seg) >= 2:
         return ".".join(seg[-2:])
-    return (seg[-1] if seg else q).rsplit("/", 1)[-1]
+    leaf = (seg[-1] if seg else q).rsplit("/", 1)[-1]
+    # A root path like "/" has no basename after the split ("" — an empty
+    # Mermaid node label breaks the flowchart parser) — fall back to the
+    # untouched original text, which for a bare "/" is itself non-empty.
+    return leaf or q or "?"
 
 
 def _dir_of(path: str) -> str:

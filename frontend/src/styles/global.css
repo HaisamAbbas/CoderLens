@@ -44,7 +44,11 @@ button { font-family: inherit; }
      viewport and putting a SECOND, page-level scrollbar next to the main
      column's own `.scroll`. Scrolling the sidebar in place keeps it to one. */
   overflow-y: auto;
+  /* Scrolls the same as before — just without a visible track next to the
+     main content's own scrollbar, which read as two competing bars. */
+  scrollbar-width: none;
 }
+.sidebar::-webkit-scrollbar { display: none; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
 .brand .mark {
   width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
