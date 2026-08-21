@@ -185,3 +185,23 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+
+
+class IngestJob(Base):
+    """Progress of one background ingest run. Persisted (not kept in an
+    in-process dict) so a job survives an app restart — free-tier hosts like
+    Render restart the process on every redeploy and on OOM, which used to
+    orphan any in-flight job and leave the UI polling a 404 forever."""
+
+    __tablename__ = "ingest_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    repo_url: Mapped[str] = mapped_column(String(500), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)  # running | done | error
+    step: Mapped[str] = mapped_column(String(50), default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    stats: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )

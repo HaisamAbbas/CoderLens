@@ -154,7 +154,7 @@ def add_repo(body: AddRepoBody) -> dict:
     # before it's stored/used anywhere downstream, not just at clone time.
     url = normalize_repo_url(url)
     job = ingest.start_ingest(url)
-    return {"job_id": job.id, "repo_url": url, "status": job.status}
+    return {"job_id": job["id"], "repo_url": url, "status": job["status"]}
 
 
 @router.get("/repos/jobs/{job_id}")
@@ -172,7 +172,7 @@ def refresh_repo() -> dict:
         r = _repo(s)
         url = r.url
     job = ingest.start_ingest(url)
-    return {"job_id": job.id, "repo_url": url, "status": job.status}
+    return {"job_id": job["id"], "repo_url": url, "status": job["status"]}
 
 
 @router.get("/overview")
