@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from archaeologist.agent.graph import investigate_stream
 from archaeologist.config import settings
 from archaeologist.indexing.opensearch_client import get_client
+from archaeologist.ingestion.repository import normalize_repo_url
 from archaeologist.models.db import session_scope
 from archaeologist.models.entities import (
     Commit,
@@ -148,6 +149,10 @@ def add_repo(body: AddRepoBody) -> dict:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise HTTPException(422, "Enter a full repository URL, e.g. https://github.com/owner/repo")
+    # A URL copied straight from a browser while viewing a branch/file (e.g.
+    # ".../owner/repo/tree/main") means the repo, not a git remote — normalize
+    # before it's stored/used anywhere downstream, not just at clone time.
+    url = normalize_repo_url(url)
     job = ingest.start_ingest(url)
     return {"job_id": job.id, "repo_url": url, "status": job.status}
 
