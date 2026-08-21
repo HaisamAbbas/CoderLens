@@ -28,6 +28,7 @@ def _check_postgres() -> dict:
             user=settings.postgres_user,
             password=settings.postgres_password,
             dbname=settings.postgres_db,
+            sslmode=settings.postgres_sslmode or None,
             connect_timeout=3,
         ) as conn:
             conn.execute("SELECT 1")

@@ -111,7 +111,18 @@ def _ingest_issues(session, repo_id: int, repo_url: str, max_issues, stats: Inge
     if not token:
         stats.notes.append("no GITHUB_TOKEN: capped to 50 to avoid the 60/hr limit")
         max_issues = min(max_issues or 50, 50)
-    issue_rows = github_issues.fetch_issues(repo_url, token, max_issues)
+    # Non-GitHub hosts, a private repo without a token, or a wrong owner/repo
+    # all 404 here — that used to raise and, since this runs in the same
+    # transaction as the rest of ingestion, roll back the file walk and git
+    # history that had already succeeded. Issues/PRs are supplementary
+    # evidence, not load-bearing: degrade to "zero issues" and keep the repo
+    # that DID ingest, rather than losing everything over one stream.
+    try:
+        issue_rows = github_issues.fetch_issues(repo_url, token, max_issues)
+    except Exception as exc:  # noqa: BLE001 - any failure here is non-fatal
+        stats.notes.append(f"issues/PRs unavailable: {exc}")
+        print(f"      -> skipped ({exc})")
+        return
 
     session.execute(delete(Issue).where(Issue.repo_id == repo_id))
     _bulk_insert(session, Issue, issue_rows, repo_id)

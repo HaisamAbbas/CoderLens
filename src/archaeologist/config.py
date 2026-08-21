@@ -19,6 +19,17 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_env: str = Field(default="development")
+    # Extra CORS origins beyond the built-in Vite dev-server ones (comma-separated,
+    # e.g. "https://coderlens.onrender.com") — only needed if the frontend is ever
+    # hosted separately from this API; the SPA-fallback path in main.py serving
+    # frontend/dist from the same origin needs none of this.
+    cors_origins: str = Field(default="")
+    # Absolute path to the built frontend (frontend/dist). Blank means "derive
+    # it from this file's location, assuming we're running from the source
+    # checkout" — true for local `uv run`, but NOT once the package is
+    # `pip install`-ed (main.py then lives under site-packages, nowhere near
+    # the actual frontend/ directory). A real deployment must set this.
+    frontend_dist: str = Field(default="")
 
     # --- LLM (reasoning / agent) — pluggable provider ---
     # "auto" (default): use a hosted key if one is set, else a local Ollama model
@@ -63,11 +74,18 @@ class Settings(BaseSettings):
     postgres_user: str = Field(default="archaeologist")
     postgres_password: str = Field(default="archaeologist")
     postgres_db: str = Field(default="archaeologist")
+    # Hosted Postgres (Neon, Supabase, ...) requires TLS; the local Docker
+    # instance doesn't, so this stays blank/off by default.
+    postgres_sslmode: str = Field(default="")
 
     # --- OpenSearch ---
     opensearch_host: str = Field(default="localhost")
     opensearch_port: int = Field(default=9200)
     opensearch_use_ssl: bool = Field(default=False)
+    # Hosted OpenSearch (e.g. Bonsai's free tier) requires HTTP basic auth;
+    # the local Docker instance doesn't, so both stay optional/blank by default.
+    opensearch_user: str = Field(default="")
+    opensearch_password: str = Field(default="")
 
     # --- Redis ---
     redis_host: str = Field(default="localhost")
@@ -96,10 +114,11 @@ class Settings(BaseSettings):
 
     @property
     def postgres_url(self) -> str:
-        return (
+        url = (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+        return f"{url}?sslmode={self.postgres_sslmode}" if self.postgres_sslmode else url
 
     @property
     def opensearch_url(self) -> str:

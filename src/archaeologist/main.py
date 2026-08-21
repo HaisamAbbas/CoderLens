@@ -39,10 +39,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Dev: allow the Vite dev server to call the API cross-origin.
+# Dev: allow the Vite dev server to call the API cross-origin. In prod the
+# built frontend is served from this same app (see the SPA fallback below),
+# so no extra origin is needed there — CORS_ORIGINS only matters if the
+# frontend is ever deployed as a separate static site instead.
+_extra_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", *_extra_origins],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -59,7 +63,13 @@ def api_root() -> dict:
 
 # Prod: serve the built React app with SPA fallback. Assets are hashed under
 # /assets; every other non-API path returns index.html so client-side routes work.
-_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+# NOTE: __file__-relative discovery only holds when running from the source
+# checkout (local `uv run`) — a `pip install`-ed package (any real deploy)
+# lands under site-packages, nowhere near frontend/, so FRONTEND_DIST must be
+# set explicitly there (the Dockerfile does this).
+_dist = Path(settings.frontend_dist) if settings.frontend_dist else (
+    Path(__file__).resolve().parents[2] / "frontend" / "dist"
+)
 if _dist.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_dist / "assets")), name="assets")
 
