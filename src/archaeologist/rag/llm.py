@@ -115,6 +115,24 @@ def call_llm(system: str, user: str, max_tokens: int = 1024, temperature: float 
     return out
 
 
+def parse_llm_json(raw: str, default: dict | None = None) -> dict:
+    """Extract a JSON object from LLM output — the one shared parser every
+    structured-prompt caller uses (prompts ask for {"key": [...]} objects, so
+    this slices {...} only, never a bare top-level array). Tolerates markdown
+    code fences and surrounding prose; returns `default` (or {}) on failure."""
+    text = raw.strip()
+    if "```" in text:  # strip markdown fences
+        text = text.split("```")[1]
+        text = text[4:] if text.startswith("json") else text
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+    return default if default is not None else {}
+
+
 def _call_gemini(system: str, user: str, max_tokens: int, temperature: float) -> str:
     if not settings.gemini_api_key:
         raise RuntimeError("GEMINI_API_KEY not set in .env")

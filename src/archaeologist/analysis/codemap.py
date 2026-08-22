@@ -13,7 +13,6 @@ neighbors, ordered by hop distance) with no notes/narrative.
 Self-contained: nothing here is imported by the other features.
 """
 
-import json
 import re
 from collections import Counter, defaultdict, deque
 
@@ -23,7 +22,7 @@ from archaeologist.indexing import code_index
 from archaeologist.indexing.opensearch_client import get_client
 from archaeologist.models.db import session_scope
 from archaeologist.models.entities import File, Symbol, SymbolEdge
-from archaeologist.rag.llm import call_llm, llm_available
+from archaeologist.rag.llm import call_llm, llm_available, parse_llm_json
 from archaeologist.retrieval.embeddings import get_embedder
 from archaeologist.retrieval.hybrid import rrf
 
@@ -83,7 +82,7 @@ def _concept_cards(ordered_syms: list[Symbol]) -> list[dict] | None:
                      + (f" — docstring: {doc}" if doc else ""))
     user = "Ordered walkthrough symbols:\n" + "\n".join(lines)
     try:
-        data = _parse_json(call_llm(CONCEPT_SYS, user, max_tokens=900, temperature=0.3, label="codemap-concepts"))
+        data = parse_llm_json(call_llm(CONCEPT_SYS, user, max_tokens=900, temperature=0.3, label="codemap-concepts"))
     except Exception:
         return None
     cards = data.get("cards")
@@ -99,15 +98,6 @@ def _concept_cards(ordered_syms: list[Symbol]) -> list[dict] | None:
         out.append({"concept": str(c.get("concept") or "Step").strip()[:30],
                     "icon": icon, "explainer": str(c.get("explainer", "")).strip()[:160]})
     return out
-
-
-def _parse_json(raw: str) -> dict:
-    text = raw.strip()
-    if "```" in text:
-        text = text.split("```")[1]
-        text = text[4:] if text.startswith("json") else text
-    a, b = text.find("{"), text.rfind("}")
-    return json.loads(text[a : b + 1])
 
 
 def _candidate_ids(session, question, client, embedder, k=10) -> list[int]:
@@ -229,7 +219,7 @@ def build_codemap(question: str, max_nodes: int = 22) -> dict:
                     for e in edges if e["source"] in id2idx and e["target"] in id2idx]
         user = f"QUESTION: {question}\n\nCANDIDATES:\n" + "\n".join(lines) + "\n\nEDGES: " + ", ".join(edge_txt)
         try:
-            data = _parse_json(call_llm(CURATE_SYS, user, max_tokens=700, label="codemap"))
+            data = parse_llm_json(call_llm(CURATE_SYS, user, max_tokens=700, label="codemap"))
             title, narrative = data.get("title", ""), data.get("narrative", "")
             selected: set[int] = set()
             for k in data.get("keep", []):

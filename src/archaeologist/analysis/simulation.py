@@ -29,10 +29,10 @@ import re
 
 from sqlalchemy import select
 
-from archaeologist.analysis.codemap import _parse_json, classify_role
+from archaeologist.analysis.codemap import classify_role
 from archaeologist.models.db import session_scope
 from archaeologist.models.entities import File, Repo, Symbol, SymbolEdge
-from archaeologist.rag.llm import call_llm, llm_available
+from archaeologist.rag.llm import call_llm, llm_available, parse_llm_json
 
 MAX_SIM_NODES = 14   # bound the batched call; longer walkthroughs are truncated
 MAX_SRC_CHARS = 900  # per-symbol source sent to the model — enough to ground it
@@ -350,9 +350,8 @@ def simulate_flow(node_ids: list[int], question: str = "") -> dict:
                 sys = SIM_SYS + ("\n\nIMPORTANT: your previous reply was cut off or invalid — be MORE "
                                  "concise so the whole JSON fits, one step per symbol." if attempt else "")
                 raw = call_llm(sys, user, max_tokens=max_tokens, temperature=0.4, label="codemap-simulate")
-                try:
-                    data = _parse_json(raw)
-                except Exception:
+                data = parse_llm_json(raw)
+                if not data:
                     data = _salvage_json(raw)  # truncated reply → keep the complete steps
                 coerced = _coerce_steps(data, ctx) if data else None
                 if coerced:

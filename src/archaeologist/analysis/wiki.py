@@ -25,7 +25,6 @@ pre-computed facts, never the DB session), so they're fanned out concurrently
 with a thread pool — a page with a dozen sections still generates in seconds.
 """
 
-import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -36,7 +35,7 @@ from archaeologist.analysis.architecture import build_architecture
 from archaeologist.analysis.communities import find_communities
 from archaeologist.analysis.entrypoints import find_entrypoints
 from archaeologist.models.entities import File, Symbol, SymbolEdge
-from archaeologist.rag.llm import call_llm, llm_available
+from archaeologist.rag.llm import call_llm, llm_available, parse_llm_json
 from archaeologist.retrieval.graph_queries import call_flow
 
 _START_PREF = {"factory": 0, "route": 1, "main": 2, "cli": 3, "worker": 4, "module": 5}
@@ -502,7 +501,7 @@ def _decide_structure(repo_name: str, menu: dict[str, str]) -> list[tuple[str, s
     user = f"Repo: {repo_name}\n\nAvailable focuses:\n{listing}"
     try:
         raw = call_llm(STRUCTURE_SYS, user, max_tokens=800, temperature=0.2, label="wiki-structure")
-        data = _parse_json(raw)
+        data = parse_llm_json(raw)
     except Exception:
         return None
     pages = data.get("pages")
@@ -544,20 +543,6 @@ def _write_prose(page_title: str, heading: str | None, facts: str) -> str | None
         return text or None
     except Exception:
         return None
-
-
-def _parse_json(raw: str) -> dict:
-    text = raw.strip()
-    if "```" in text:
-        text = text.split("```")[1]
-        text = text[4:] if text.startswith("json") else text
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1:
-        try:
-            return json.loads(text[start:end + 1])
-        except json.JSONDecodeError:
-            pass
-    return {}
 
 
 # ---------- main entry point ----------

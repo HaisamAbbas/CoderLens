@@ -5,12 +5,10 @@ The LLM (Gemini by default) drives plan and grade; retrieval and graph
 expansion are deterministic tools.
 """
 
-import json
-
 from archaeologist.agent import tools
 from archaeologist.agent.state import InvestigationState
 from archaeologist.rag import prompts
-from archaeologist.rag.llm import call_llm, call_llm_stream, llm_available
+from archaeologist.rag.llm import call_llm, call_llm_stream, llm_available, parse_llm_json
 
 MAX_EVIDENCE = 24
 MAX_HISTORY_TURNS = 4  # enough for pronoun/context resolution without bloating every prompt
@@ -44,21 +42,6 @@ with citations across code/docs/commits/issues. Return ONLY JSON:
  "followup_queries": [up to 3 new search strings targeting the gap; [] if sufficient]}"""
 
 
-def _parse_json(raw: str, default: dict) -> dict:
-    text = raw.strip()
-    if "```" in text:  # strip markdown fences
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1:
-        try:
-            return json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-    return default
-
-
 def plan_node(state: InvestigationState) -> dict:
     q = state["question"]
     if not llm_available():
@@ -70,7 +53,7 @@ def plan_node(state: InvestigationState) -> dict:
             "trace": state["trace"] + [f"PLAN offline (no LLM) — retrieving {q!r}"],
         }
     raw = call_llm(PLAN_SYS, f"Question: {q}" + _history_block(state.get("history")), max_tokens=400)
-    plan = _parse_json(raw, {"search_queries": [q], "graph_targets": [], "streams": None})
+    plan = parse_llm_json(raw, {"search_queries": [q], "graph_targets": [], "streams": None})
     queries = (plan.get("search_queries") or [q])[:4]
     targets = plan.get("graph_targets") or []
     streams = plan.get("streams")
@@ -127,7 +110,7 @@ def grade_node(state: InvestigationState) -> dict:
             ],
         }
     raw = call_llm(GRADE_SYS, f"Question: {state['question']}\n\nEvidence:\n{summary}", max_tokens=300)
-    g = _parse_json(raw, {"sufficient": True, "missing": "", "followup_queries": []})
+    g = parse_llm_json(raw, {"sufficient": True, "missing": "", "followup_queries": []})
     sufficient = bool(g.get("sufficient"))
     followups = g.get("followup_queries") or []
     return {
