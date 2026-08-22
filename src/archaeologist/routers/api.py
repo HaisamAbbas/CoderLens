@@ -29,7 +29,9 @@ from archaeologist.models.entities import (
     Repo,
     Symbol,
     SymbolEdge,
+    Weakness,
 )
+from archaeologist.rag.llm import llm_available
 from archaeologist.retrieval.embeddings import get_embedder
 from archaeologist.retrieval.multi import search_all
 from archaeologist.services import ingest
@@ -83,6 +85,11 @@ def status() -> dict:
                       else settings.voyage_model if embedder is not None else None),
             "active": embedder is not None,
         },
+        # Whether the wiki-publish feature should be offered at all — the UI
+        # hides the Confluence entry point unless all four settings are set.
+        "confluence": {"configured": settings.confluence_configured},
+        # Same gating for the weaknesses → Jira flow.
+        "jira": {"configured": settings.jira_configured},
     }
 
 
@@ -573,3 +580,169 @@ def conversation_delete(conv_id: int) -> dict:
         if not ok:
             raise HTTPException(404, "Conversation not found")
         return {"deleted": conv_id}
+
+
+class PublishConfluenceBody(BaseModel):
+    section_keys: list[str]
+
+
+@router.post("/confluence/publish")
+def publish_confluence(body: PublishConfluenceBody) -> dict:
+    """Publish the reviewed wiki sections to Confluence as a tracked background
+    job. Nothing is sent until this endpoint fires — the UI collects explicit
+    user approval (section checklist) before calling it."""
+    if not settings.confluence_configured:
+        raise HTTPException(400, "Confluence is not configured — set CONFLUENCE_* in .env.")
+    from archaeologist.services import confluence_job
+    with session_scope() as s:
+        r = _repo(s)
+        if not r.wiki_cache:
+            raise HTTPException(
+                409, "Generate the wiki first (visit Start Here) before publishing.")
+        repo_id = r.id
+    job = confluence_job.start_publish(repo_id, body.section_keys)
+    return {"job_id": job["id"], "status": job["status"]}
+
+
+@router.get("/confluence/jobs/{job_id}")
+def confluence_job_status(job_id: str) -> dict:
+    from archaeologist.services import confluence_job
+    status = confluence_job.job_status(job_id)
+    if status is None:
+        raise HTTPException(404, f"Unknown publish job: {job_id}")
+    return status
+
+
+class ScanWeaknessesBody(BaseModel):
+    scan_all: bool = False
+
+
+@router.post("/weaknesses/scan")
+def scan_weaknesses(body: ScanWeaknessesBody) -> dict:
+    """Scan the active repo for weaknesses (LLM, one call per file, capped by
+    default) as a tracked background job. Findings land in the weaknesses table
+    for review — nothing external happens until tickets are explicitly approved."""
+    from archaeologist.services import weakness_scan
+    with session_scope() as s:
+        repo_id = _repo(s).id
+    if not llm_available():
+        raise HTTPException(400, "No LLM provider available — configure one in .env to scan.")
+    job = weakness_scan.start_scan(repo_id, scan_all=body.scan_all)
+    return {"job_id": job["id"], "status": job["status"]}
+
+
+@router.get("/weaknesses/scan/{job_id}")
+def weakness_scan_status(job_id: str) -> dict:
+    from archaeologist.services import weakness_scan
+    status = weakness_scan.job_status(job_id)
+    if status is None:
+        raise HTTPException(404, f"Unknown scan job: {job_id}")
+    return status
+
+
+def _snippet(content: str | None, start: int, end: int, max_lines: int = 46) -> str:
+    """Slice the finding's code from the indexed file on read — same approach
+    (and truncation marker) as wiki.py's snippet-slicing; never stored, so it
+    can't drift from File.content."""
+    if not content:
+        return ""
+    lines = content.splitlines()
+    start = max(1, start)
+    end = min(len(lines), max(start, end))
+    chunk = lines[start - 1:end]
+    if not chunk:
+        return ""
+    code = "\n".join(chunk[:max_lines])
+    if len(chunk) > max_lines:
+        code += "\n    # … (truncated)"
+    return code
+
+
+_EXT_LANG = {
+    "py": "python", "pyi": "python", "js": "javascript", "jsx": "javascript",
+    "mjs": "javascript", "cjs": "javascript", "ts": "typescript", "tsx": "typescript",
+    "go": "go", "rs": "rust", "java": "java", "rb": "ruby", "php": "php", "cs": "csharp",
+    "cpp": "cpp", "cc": "cpp", "cxx": "cpp", "hpp": "cpp", "c": "c", "h": "c",
+    "sh": "bash", "bash": "bash", "sql": "sql", "yaml": "yaml", "yml": "yaml",
+    "json": "json", "html": "html", "css": "css", "scss": "css", "toml": "ini", "ini": "ini",
+}
+
+
+@router.get("/weaknesses")
+def list_weaknesses() -> dict:
+    """All persisted findings for the active repo — durable state, unlike the
+    ephemeral /dead-code candidates. Snippets are sliced from File.content here,
+    at read time."""
+    with session_scope() as s:
+        r = _repo(s)
+        rows = s.scalars(
+            select(Weakness).where(Weakness.repo_id == r.id)
+            .order_by(Weakness.status, Weakness.severity, Weakness.file_path, Weakness.start_line)
+        ).all()
+        files = {f.path: f.content for f in
+                 s.scalars(select(File).where(File.repo_id == r.id)).all()}
+
+        def lang_of(path: str) -> str:
+            ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+            return _EXT_LANG.get(ext, "")
+
+        return {"repo": r.name, "head_sha": r.head_sha, "weaknesses": [{
+            "id": w.id,
+            "file_path": w.file_path,
+            "start_line": w.start_line,
+            "end_line": w.end_line,
+            "category": w.category,
+            "severity": w.severity,
+            "title": w.title,
+            "description": w.description,
+            "suggested_fix": w.suggested_fix,
+            "status": w.status,
+            "jira_url": w.jira_url,
+            "head_sha": w.head_sha,
+            "lang": lang_of(w.file_path),
+            "snippet": _snippet(files.get(w.file_path), w.start_line, w.end_line),
+        } for w in rows]}
+
+
+@router.post("/weaknesses/{weakness_id}/dismiss")
+def dismiss_weakness(weakness_id: int) -> dict:
+    """Local status flip — no job needed. A re-scan brings dismissed findings
+    back (they're replaced like 'new' rows); only ticketing survives re-scans."""
+    with session_scope() as s:
+        r = _repo(s)
+        w = s.get(Weakness, weakness_id)
+        if w is None or w.repo_id != r.id:
+            raise HTTPException(404, "Finding not found")
+        if w.status == "ticketed":
+            raise HTTPException(409, "Already ticketed — it can't be dismissed.")
+        w.status = "dismissed"
+        return {"id": weakness_id, "status": "dismissed"}
+
+
+class CreateJiraTicketsBody(BaseModel):
+    finding_ids: list[int]
+
+
+@router.post("/jira/tickets")
+def create_jira_tickets(body: CreateJiraTicketsBody) -> dict:
+    """Create Jira issues for the approved findings as a tracked background job.
+    Nothing reaches Jira until this fires — the UI collects explicit approval
+    via checkboxes first."""
+    if not settings.jira_configured:
+        raise HTTPException(400, "Jira is not configured — set JIRA_* in .env.")
+    if not body.finding_ids:
+        raise HTTPException(422, "Select at least one finding.")
+    from archaeologist.services import jira_ticket
+    with session_scope() as s:
+        repo_id = _repo(s).id
+    job = jira_ticket.start_tickets(repo_id, body.finding_ids)
+    return {"job_id": job["id"], "status": job["status"]}
+
+
+@router.get("/jira/jobs/{job_id}")
+def jira_ticket_status(job_id: str) -> dict:
+    from archaeologist.services import jira_ticket
+    status = jira_ticket.job_status(job_id)
+    if status is None:
+        raise HTTPException(404, f"Unknown ticket job: {job_id}")
+    return status

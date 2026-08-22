@@ -30,6 +30,8 @@ dependencies = [
     # Agent (Phase 6): investigation state machine.
     "langgraph>=0.2",
     "networkx>=3.6.1",
+    # Confluence publish (Phase 8)
+    "markdown>=3.7",
 ]
 
 [project.optional-dependencies]

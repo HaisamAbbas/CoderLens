@@ -205,3 +205,94 @@ class IngestJob(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+
+
+class ConfluencePublishJob(Base):
+    """Progress of one wiki publish to Confluence. Publishing ~6-8 sections
+    means several sequential third-party calls each (title lookup, create or
+    update, diagram render, attachment upload) — long enough to need a tracked,
+    persisted background job (same reasoning as IngestJob) but with different
+    fields, so it gets its own table rather than sharing ingest's."""
+
+    __tablename__ = "confluence_publish_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)  # running|done|error
+    section_keys: Mapped[list] = mapped_column(JSON)
+    parent_url: Mapped[str | None] = mapped_column(String(500))
+    results: Mapped[list | None] = mapped_column(JSON)  # appended live, per finished section
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class Weakness(Base):
+    """One LLM-detected weakness (logic / security / style) in one file.
+    The first place an LLM's structured output is persisted to a row rather
+    than served transiently — hence the strict coercion before insert.
+
+    Lifecycle: a scan REPLACES rows with status new|dismissed; status="ticketed"
+    rows survive every re-scan (a human already acted on them). Snippets are
+    NOT stored — they're sliced from File.content on read so they can't drift
+    from the indexed source."""
+
+    __tablename__ = "weaknesses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
+    file_path: Mapped[str] = mapped_column(String(1000), index=True)
+    start_line: Mapped[int] = mapped_column(Integer)
+    end_line: Mapped[int] = mapped_column(Integer)
+    symbol_id: Mapped[int | None] = mapped_column(ForeignKey("symbols.id"), index=True)
+    category: Mapped[str] = mapped_column(String(20), index=True)   # logic|security|style
+    severity: Mapped[str] = mapped_column(String(10), index=True)   # high|medium|low
+    title: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str] = mapped_column(Text)
+    suggested_fix: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="new", index=True)  # new|dismissed|ticketed
+    jira_url: Mapped[str | None] = mapped_column(String(500))
+    head_sha: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class WeaknessScanJob(Base):
+    """Progress of one weakness scan. Mirrors IngestJob's shape: one internal
+    pipeline with discrete progress and no third-party writes, persisted so it
+    survives process restarts on free-tier hosts."""
+
+    __tablename__ = "weakness_scan_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)  # running|done|error
+    files_scanned: Mapped[int] = mapped_column(Integer, default=0)
+    files_total: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[list | None] = mapped_column(JSON)          # cap/truncation disclosures
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class JiraTicketJob(Base):
+    """Progress of one batch of approved findings being turned into Jira issues.
+    Mirrors ConfluencePublishJob's shape: independent external POSTs, each one
+    separately failable, results appended live. On each success the matching
+    Weakness row flips to status="ticketed" with its jira_url."""
+
+    __tablename__ = "jira_ticket_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="running", index=True)
+    finding_ids: Mapped[list] = mapped_column(JSON)
+    results: Mapped[list | None] = mapped_column(JSON)        # {finding_id, status, url|error}, appended live
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )

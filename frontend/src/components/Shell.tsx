@@ -8,7 +8,7 @@ import { LogoMark } from "./Logo";
 import AskWidget from "./AskWidget";
 import type { RepoJob } from "../lib/types";
 import {
-  BookIcon, ClusterIcon, CompassIcon, FlagIcon, GhostIcon, GraphIcon, MapIcon,
+  BookIcon, ClusterIcon, CompassIcon, FlameIcon, FlagIcon, GhostIcon, GraphIcon, MapIcon,
   MoonIcon, SearchIcon, SunIcon, WorkspaceIcon,
 } from "./icons";
 
@@ -16,7 +16,8 @@ const TITLES: Record<string, string> = {
   "/tour": "Start here", "/explorer": "Explorer", "/overview": "Overview",
   "/graph": "Dependency graph", "/reader": "Reader",
   "/codemap": "Codemap", "/flow": "Call flow", "/investigate": "Investigate",
-  "/search": "Search", "/dead-code": "Dead code", "/communities": "Communities",
+  "/search": "Search", "/dead-code": "Dead code", "/weaknesses": "Bug Hunter",
+  "/communities": "Communities",
 };
 
 export default function Shell() {
@@ -129,6 +130,7 @@ export default function Shell() {
               <NavLink to="/graph"><GraphIcon /> Graph</NavLink>
               <NavLink to="/codemap"><MapIcon /> Codemap</NavLink>
               <NavLink to="/dead-code"><GhostIcon /> Dead code</NavLink>
+              <NavLink to="/weaknesses"><FlameIcon /> Bug Hunter</NavLink>
               <NavLink to="/communities"><ClusterIcon /> Communities</NavLink>
             </>
           )}

@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import Mermaid from "../components/Mermaid";
 import WikiCode from "../components/WikiCode";
+import ConfluencePublishDialog from "../components/ConfluencePublishDialog";
 import Markdown, { renderInline } from "../lib/markdown";
 import { ErrorState } from "../components/PageState";
 import type { WikiBlock, WikiChip } from "../lib/types";
@@ -64,6 +66,9 @@ export default function Tour() {
   const nav = useNavigate();
   const { sectionKey } = useParams<{ sectionKey?: string }>();
   const wikiQ = useQuery({ queryKey: ["wiki"], queryFn: api.wiki, staleTime: Infinity });
+  // Shared cache with Shell's poll — no extra request once status is warm.
+  const statusQ = useQuery({ queryKey: ["status"], queryFn: api.status, staleTime: 60_000 });
+  const [publishOpen, setPublishOpen] = useState(false);
 
   const openChip = (c: WikiChip) => nav("/reader", { state: { path: c.path, line: c.line } });
 
@@ -107,7 +112,14 @@ export default function Tour() {
 
   return (
     <div className="page wk">
-      <div className="eyebrow">Start here · {wikiQ.data.repo}</div>
+      <div className="eyebrow">
+        Start here · {wikiQ.data.repo}
+        {statusQ.data?.confluence?.configured && (
+          <button className="btn" onClick={() => setPublishOpen(true)} style={{ marginLeft: 10 }}>
+            Publish to Confluence
+          </button>
+        )}
+      </div>
       <h1 className="h1">{sec.title}</h1>
       <p className="lede">{sec.subtitle}</p>
 
@@ -140,9 +152,13 @@ export default function Tour() {
       </div>
 
       <div className="wk-pager">
-        {prev ? <button className="btn" onClick={() => nav(`/tour/${prev.key}`)}>‹ {prev.title}</button> : <span />}
-        {next && <button className="btn primary" onClick={() => nav(`/tour/${next.key}`)}>{next.title} ›</button>}
+        {prev ? <button className="btn" onClick={() => nav(`/tour/${prev.key}`)}>← {prev.title}</button> : <span />}
+        {next && <button className="btn primary" onClick={() => nav(`/tour/${next.key}`)}>{next.title} →</button>}
       </div>
+
+      {publishOpen && (
+        <ConfluencePublishDialog sections={sections} onClose={() => setPublishOpen(false)} />
+      )}
     </div>
   );
 }

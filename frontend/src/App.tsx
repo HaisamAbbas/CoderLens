@@ -14,6 +14,7 @@ import Search from "./pages/Search";
 import NotFound from "./pages/NotFound";
 import DeadCode from "./pages/DeadCode";
 import Communities from "./pages/Communities";
+import Weaknesses from "./pages/Weaknesses";
 
 export default function App() {
   return (
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/investigate" element={<Investigate />} />
         <Route path="/search" element={<Search />} />
         <Route path="/dead-code" element={<DeadCode />} />
+        <Route path="/weaknesses" element={<Weaknesses />} />
         <Route path="/communities" element={<Communities />} />
         <Route path="*" element={<NotFound />} />
       </Route>

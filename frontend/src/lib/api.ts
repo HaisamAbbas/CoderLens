@@ -1,9 +1,9 @@
 import type {
-  Architecture, AskResult, Codemap, CodemapEdge, CodemapNode, Communities, ConversationDetail,
-  ConversationKind, ConversationSummary, Coupling, DeadCode, Entrypoint,
-  FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, InvestigateResult, Overview, Repo,
-  RepoJob, SearchResponse, SimulationTrace, Status, Stream, StreamEvent, SymbolDetail,
-  SymbolIndexEntry, TreeFile, Wiki,
+  Architecture, AskResult, Codemap, CodemapEdge, CodemapNode, Communities, ConfluenceJob,
+  ConversationDetail, ConversationKind, ConversationSummary, Coupling, DeadCode, Entrypoint,
+  FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, InvestigateResult,
+  JiraTicketJob, Overview, Repo, RepoJob, SearchResponse, SimulationTrace, Status, Stream,
+  StreamEvent, SymbolDetail, SymbolIndexEntry, TreeFile, WeaknessList, WeaknessScanJob, Wiki,
 } from "./types";
 
 async function get<T>(url: string): Promise<T> {
@@ -83,6 +83,17 @@ export const api = {
     get<{ conversations: ConversationSummary[] }>(`/api/conversations?kind=${kind}`),
   conversation: <T,>(id: number) => get<ConversationDetail<T>>(`/api/conversations/${id}`),
   deleteConversation: (id: number) => del(`/api/conversations/${id}`),
+  publishConfluence: (sectionKeys: string[]) =>
+    post<{ job_id: string; status: string }>("/api/confluence/publish", { section_keys: sectionKeys }),
+  confluenceJob: (jobId: string) => get<ConfluenceJob>(`/api/confluence/jobs/${jobId}`),
+  scanWeaknesses: (scanAll = false) =>
+    post<{ job_id: string; status: string }>("/api/weaknesses/scan", { scan_all: scanAll }),
+  weaknessScanJob: (jobId: string) => get<WeaknessScanJob>(`/api/weaknesses/scan/${jobId}`),
+  weaknesses: () => get<WeaknessList>("/api/weaknesses"),
+  dismissWeakness: (id: number) => post<{ id: number; status: string }>(`/api/weaknesses/${id}/dismiss`, {}),
+  createJiraTickets: (findingIds: number[]) =>
+    post<{ job_id: string; status: string }>("/api/jira/tickets", { finding_ids: findingIds }),
+  jiraJob: (jobId: string) => get<JiraTicketJob>(`/api/jira/jobs/${jobId}`),
 };
 
 /**

@@ -7,6 +7,16 @@ export interface Repo {
 export interface Status {
   llm: { provider: string | null; model: string; available: boolean };
   embedding: { provider: string; model: string | null; active: boolean };
+  confluence?: { configured: boolean };
+  jira?: { configured: boolean };
+}
+
+export interface ConfluenceResult {
+  key: string; title: string; status: "ok" | "error"; url?: string; error?: string;
+}
+export interface ConfluenceJob {
+  id: string; status: "running" | "done" | "error";
+  parent_url: string | null; results: ConfluenceResult[]; error: string;
 }
 
 export interface RepoJob {
@@ -208,4 +218,22 @@ export type ConversationKind = "investigate" | "codemap";
 export interface ConversationSummary { id: number; question: string; created_at: string; }
 export interface ConversationDetail<T = unknown> {
   id: number; kind: ConversationKind; question: string; result: T; created_at: string;
+}
+
+export interface WeaknessFinding {
+  id: number; file_path: string; start_line: number; end_line: number;
+  category: "logic" | "security" | "style"; severity: "high" | "medium" | "low";
+  title: string; description: string; suggested_fix: string | null;
+  status: "new" | "dismissed" | "ticketed"; jira_url: string | null;
+  head_sha: string | null; lang: string; snippet: string;
+}
+export interface WeaknessList { repo: string; head_sha: string | null; weaknesses: WeaknessFinding[] }
+export interface WeaknessScanJob {
+  id: string; repo_id: number; status: "running" | "done" | "error";
+  files_scanned: number; files_total: number; message: string; notes: string[]; error: string;
+}
+export interface JiraTicketResult { finding_id: number; status: "ok" | "error"; url?: string; key?: string; error?: string }
+export interface JiraTicketJob {
+  id: string; repo_id: number; status: "running" | "done" | "error";
+  finding_ids: number[]; results: JiraTicketResult[]; error: string;
 }
