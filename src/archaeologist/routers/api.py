@@ -142,6 +142,7 @@ def repos() -> dict:
 
 class AddRepoBody(BaseModel):
     url: str
+    token: str = ""   # optional GitHub PAT for private repos — used transiently at clone, never stored
 
 
 @router.post("/repos")
@@ -160,8 +161,8 @@ def add_repo(body: AddRepoBody) -> dict:
     # ".../owner/repo/tree/main") means the repo, not a git remote — normalize
     # before it's stored/used anywhere downstream, not just at clone time.
     url = normalize_repo_url(url)
-    job = ingest.start_ingest(url)
-    return {"job_id": job["id"], "repo_url": url, "status": job["status"]}
+    job = ingest.start_ingest(url, token=body.token.strip())
+    return {"job_id": job["id"], "repo_url": url, "status": job["status"]}  # token never echoed
 
 
 @router.get("/repos/jobs/{job_id}")
@@ -172,13 +173,22 @@ def repo_job(job_id: str) -> dict:
     return status
 
 
+class RefreshRepoBody(BaseModel):
+    token: str = ""   # manual recovery path: re-supply after an ephemeral-disk wipe killed the local clone
+
+
 @router.post("/repos/refresh")
-def refresh_repo() -> dict:
-    """Re-ingest the active repo end-to-end (picks up new commits / files)."""
+def refresh_repo(body: RefreshRepoBody | None = None) -> dict:
+    """Re-ingest the active repo end-to-end (picks up new commits / files).
+
+    Today refresh never contacts the remote unless the local clone is gone
+    (ephemeral disk) — in that edge case a private repo needs its PAT again;
+    pass it here. No dedicated frontend flow; this is a fallback."""
     with session_scope() as s:
         r = _repo(s)
         url = r.url
-    job = ingest.start_ingest(url)
+    token = (body.token if body else "").strip()
+    job = ingest.start_ingest(url, token=token)
     return {"job_id": job["id"], "repo_url": url, "status": job["status"]}
 
 

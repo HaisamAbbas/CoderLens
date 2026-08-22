@@ -36,9 +36,25 @@ def repo_slug(url: str) -> tuple[str, str]:
     return owner, name
 
 
-def clone_or_open(url: str, repos_dir: Path) -> tuple[git.Repo, Path]:
+def _with_token(url: str, token: str) -> str:
+    """Embed a PAT as HTTP Basic creds for the clone call only — GitHub's
+    documented PAT-over-HTTPS mechanism. Only https:// URLs support this."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return url
+    return parsed._replace(netloc=f"x-access-token:{token}@{parsed.netloc}").geturl()
+
+
+def clone_or_open(url: str, repos_dir: Path, token: str = "") -> tuple[git.Repo, Path]:
     """Full clone (needed for git history) into repos_dir/<owner>__<name>.
-    If it already exists, open it in place."""
+    If it already exists, open it in place.
+
+    `token` (a GitHub PAT) is used transiently at the single clone_from call
+    and NEVER persisted: the origin remote is scrubbed back to the bare URL
+    immediately after a successful clone (git records the credentialed URL in
+    .git/config otherwise), and clone failures are re-raised with the token
+    substring masked before the message can reach IngestJob.error or the UI.
+    """
     url = normalize_repo_url(url)
     owner, name = repo_slug(url)
     dest = repos_dir / f"{owner}__{name}"
@@ -50,7 +66,17 @@ def clone_or_open(url: str, repos_dir: Path) -> tuple[git.Repo, Path]:
     if dest.exists():
         shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    repo = git.Repo.clone_from(url, dest)
+    token = (token or "").strip()
+    clone_url = _with_token(url, token) if token else url
+    try:
+        repo = git.Repo.clone_from(clone_url, dest)
+    except Exception as exc:
+        msg = str(exc).replace(token, "***") if token else str(exc)
+        hint = "" if token else (
+            " — if this is a private repository, add a GitHub token when adding it.")
+        raise RuntimeError(f"git clone failed: {msg}{hint}") from exc
+    if token:
+        repo.remotes.origin.set_url(url)   # scrub the token out of .git/config right away
     return repo, dest
 
 

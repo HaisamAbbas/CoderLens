@@ -54,6 +54,8 @@ export default function Landing() {
     document.title = "CoderLens — understand any codebase";
   }, []);
   const [url, setUrl] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [token, setToken] = useState("");
   const [starting, setStarting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
@@ -70,9 +72,12 @@ export default function Landing() {
     setSubmitError("");
     setJobError("");
     try {
-      const res = await api.addRepo(u);
+      const res = await api.addRepo(u, token.trim());
       setJobId(res.job_id);
       reposQ.refetch();
+      // The PAT lives in component state only — gone once the submit succeeds.
+      setToken("");
+      setShowToken(false);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : String(err));
       setStarting(false);
@@ -112,6 +117,28 @@ export default function Landing() {
             {busy ? <span className="spin" /> : <SearchIcon />}
           </button>
         </form>
+
+        <div className="lp-private">
+          <button
+            type="button"
+            className={"lp-private-toggle" + (showToken ? " on" : "")}
+            onClick={() => setShowToken((v) => !v)}
+            disabled={busy}
+          >
+            Private repository?
+          </button>
+          {showToken && (
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="GitHub PAT (fine-grained or classic with repo access) — used only for the clone, never stored"
+              aria-label="GitHub access token"
+              autoComplete="off"
+              disabled={busy}
+            />
+          )}
+        </div>
 
         {submitError && <div className="lp-msg err">{submitError}</div>}
 

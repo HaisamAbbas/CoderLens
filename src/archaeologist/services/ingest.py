@@ -68,10 +68,13 @@ def _update(job_id: str, **fields) -> None:
             setattr(job, k, v)
 
 
-def start_ingest(repo_url: str) -> dict:
+def start_ingest(repo_url: str, token: str = "") -> dict:
     """Start a full ingest in a background thread. Returns the job.
 
     If a job for the same repo is already running, returns it (idempotent).
+    `token` is an optional GitHub PAT used transiently at clone time for
+    private repos — deliberately NOT a persisted job field (no new column,
+    never echoed back through any response).
     """
     existing = running_job_for(repo_url)
     if existing is not None:
@@ -81,14 +84,14 @@ def start_ingest(repo_url: str) -> dict:
     with session_scope() as session:
         session.add(IngestJob(id=job_id, repo_url=repo_url))
 
-    thread = threading.Thread(target=_run, args=(job_id, repo_url), daemon=True)
+    thread = threading.Thread(target=_run, args=(job_id, repo_url, token), daemon=True)
     thread.start()
     return job_status(job_id)
 
 
-def _run(job_id: str, repo_url: str) -> None:
+def _run(job_id: str, repo_url: str, token: str = "") -> None:
     try:
-        _pipeline(job_id, repo_url)
+        _pipeline(job_id, repo_url, token)
         _update(job_id, status="done", step="", message="Ingest complete")
     except Exception as exc:  # noqa: BLE001 - surface any failure on the job
         status = job_status(job_id)
@@ -96,10 +99,10 @@ def _run(job_id: str, repo_url: str) -> None:
         _update(job_id, status="error", step="", error=str(exc), message=f"Failed at step {step or 'start'}")
 
 
-def _pipeline(job_id: str, repo_url: str) -> None:
+def _pipeline(job_id: str, repo_url: str, token: str = "") -> None:
     # --- 1. Clone + walk the five streams into Postgres ---
     _update(job_id, step="clone", message=f"Cloning and walking {repo_url} …")
-    stats = ingest_repository(repo_url=repo_url)
+    stats = ingest_repository(repo_url=repo_url, token=token)
     job_stats = {
         "files": stats.files, "commits": stats.commits,
         "issues": stats.issues, "prs": stats.prs,

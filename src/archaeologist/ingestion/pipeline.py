@@ -34,7 +34,11 @@ def ingest_repository(
     max_issues: int | None = 500,
     skip_issues: bool = False,
     only_issues: bool = False,
+    token: str = "",
 ) -> IngestStats:
+    """`token` (optional GitHub PAT) authenticates the clone of a private repo
+    transiently (see repository.clone_or_open) and falls back to the global
+    settings.github_token for the issues/PRs fetch when omitted."""
     repo_url = repo_url or settings.target_repo_url
     stats = IngestStats(repo_url=repo_url)
     init_db()
@@ -43,23 +47,32 @@ def ingest_repository(
         repo_id = (
             _refresh_only_issues(session, repo_url, max_issues, stats)
             if only_issues
-            else _full_ingest(session, repo_url, max_commits, stats)
+            else _full_ingest(session, repo_url, max_commits, stats, token)
         )
 
         if skip_issues:
             stats.notes.append("issues skipped (--skip-issues)")
             print("[4/5] Issues/PRs: skipped")
         else:
-            _ingest_issues(session, repo_id, repo_url, max_issues, stats)
+            _ingest_issues(session, repo_id, repo_url, max_issues, stats, token)
 
     print("[5/5] Done.")
     return stats
 
 
-def _full_ingest(session, repo_url: str, max_commits: int | None, stats: IngestStats) -> int:
+def _effective_clone_token(token: str) -> str:
+    """Per-repo token (typed in the Add form) wins; otherwise fall back to the
+    global GITHUB_TOKEN — so one well-scoped PAT set in .env covers every
+    private repo without retyping. Whitespace counts as blank."""
+    return (token or "").strip() or settings.github_token
+
+
+def _full_ingest(session, repo_url: str, max_commits: int | None, stats: IngestStats,
+                 token: str = "") -> int:
     print(f"[1/5] Cloning / opening {repo_url} ...")
     repos_dir = Path(settings.repos_dir).resolve()
-    git_repo, dest = repository.clone_or_open(repo_url, repos_dir)
+    git_repo, dest = repository.clone_or_open(repo_url, repos_dir,
+                                              _effective_clone_token(token))
     branch, head_sha = repository.head_info(git_repo)
     print(f"      -> {dest}  (branch={branch}, head={head_sha[:8] if head_sha else '?'})")
 
@@ -105,9 +118,13 @@ def _refresh_only_issues(session, repo_url: str, max_issues, stats: IngestStats)
     return repo.id
 
 
-def _ingest_issues(session, repo_id: int, repo_url: str, max_issues, stats: IngestStats) -> None:
+def _ingest_issues(session, repo_id: int, repo_url: str, max_issues, stats: IngestStats,
+                   token: str = "") -> None:
     print(f"[4/5] Fetching issues/PRs (max_issues={max_issues or 'all'}) ...")
-    token = settings.github_token
+    # A per-repo token (supplied at add time for a private repo) also
+    # authenticates the issues/PRs fetch for that same repo; the global
+    # settings.github_token remains the fallback.
+    token = token or settings.github_token
     if not token:
         stats.notes.append("no GITHUB_TOKEN: capped to 50 to avoid the 60/hr limit")
         max_issues = min(max_issues or 50, 50)

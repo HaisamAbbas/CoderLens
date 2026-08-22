@@ -48,6 +48,22 @@
 }
 .lp-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow-lg); }
 .lp-search input { flex: 1; border: none; background: none; outline: none; color: var(--text); font-size: 17px; padding: 16px 0; }
+
+/* Private-repo token row (below the search bar) */
+.lp-private { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 12px; }
+.lp-private-toggle {
+  background: none; border: none; padding: 2px 4px; cursor: pointer;
+  font-size: 12.5px; color: var(--text-3); text-decoration: underline dotted;
+}
+.lp-private-toggle:hover, .lp-private-toggle.on { color: var(--accent); }
+.lp-private input {
+  width: min(680px, 92vw); box-sizing: border-box;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  outline: none; color: var(--text); font-size: 13.5px; padding: 11px 22px;
+}
+.lp-private input:focus { border-color: var(--accent); }
+.lp-private input::placeholder { color: var(--text-3); }
 .lp-search input::placeholder { color: var(--text-3); }
 .lp-search button {
   width: 48px; height: 48px; border-radius: 50%; border: none; flex-shrink: 0;
