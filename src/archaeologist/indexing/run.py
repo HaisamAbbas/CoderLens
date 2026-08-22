@@ -13,7 +13,7 @@ from archaeologist.config import settings
 from archaeologist.indexing import code_index, symbols
 from archaeologist.indexing.opensearch_client import get_client
 from archaeologist.models.db import init_db, session_scope
-from archaeologist.models.entities import File, Repo, Symbol
+from archaeologist.models.entities import File, Repo, Symbol, SymbolEdge
 from archaeologist.retrieval.embeddings import get_embedder
 
 
@@ -37,6 +37,9 @@ def extract_to_postgres(repo_id: int | None = None) -> int:
         if repo is None:
             raise SystemExit("No repo ingested — run the Phase 1 ingestion first.")
 
+        # Stale edges from a previous ingest of this repo must go BEFORE the
+        # symbols delete, or their FK references break re-ingest entirely.
+        session.execute(delete(SymbolEdge).where(SymbolEdge.repo_id == repo.id))
         session.execute(delete(Symbol).where(Symbol.repo_id == repo.id))
 
         files = session.scalars(
