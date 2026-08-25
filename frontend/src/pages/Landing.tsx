@@ -149,7 +149,7 @@ export default function Landing() {
               {JOB_STEP_LABEL[job.step] ?? job.message ?? "Working…"}
             </div>
             <div className="lp-job-sub">
-              {job.step === "clone" && job.stats.files != null && `files: ${job.stats.files}`}
+              {job.step === "clone" && job.stats?.files != null && `files: ${job.stats?.files}`}
               {job.status === "running" && "This can take a few minutes for a large repository."}
             </div>
           </div>

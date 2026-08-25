@@ -30,6 +30,16 @@ export default function Weaknesses() {
 
   const [scanJobId, setScanJobId] = useState<string | null>(null);
   const [scanJob, setScanJob] = useState<WeaknessScanJob | null>(null);
+  // The scan runs server-side; this component's job id is lost on unmount. On
+  // (re)mount, ask the server for the active repo's current scan and re-attach
+  // to it if it's still running — so navigating away and back (or a full page
+  // reload) keeps showing live progress instead of a reset/idle button.
+  const resumeQ = useQuery({
+    queryKey: ["weaknessScanCurrent"],
+    queryFn: api.currentWeaknessScan,
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  });
   const [ticketJobId, setTicketJobId] = useState<string | null>(null);
   const [ticketJob, setTicketJob] = useState<JiraTicketJob | null>(null);
   const [scanAll, setScanAll] = useState(false);
@@ -38,6 +48,18 @@ export default function Weaknesses() {
   const [showDismissed, setShowDismissed] = useState(false);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [error, setError] = useState("");
+
+  // Re-attach to a scan that's still running server-side after a remount.
+  // Only adopt when we aren't already tracking a job, so a scan the user just
+  // started (or a poll already in flight) is never clobbered by this.
+  useEffect(() => {
+    const j = resumeQ.data?.job;
+    if (j && j.status === "running" && !scanJobId) {
+      setScanJobId(j.id);
+      setScanJob(j);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeQ.data]);
 
   // Same inline recursive-setTimeout polling as ConfluencePublishDialog.
   useEffect(() => {

@@ -21,7 +21,7 @@ export interface ConfluenceJob {
 
 export interface RepoJob {
   id: string; repo_url: string; status: "running" | "done" | "error";
-  step: string; message: string; stats: Record<string, number>; error: string;
+  step: string; message: string; stats: Record<string, number> | null; error: string;
 }
 
 export interface ReadingItem { path: string; degree: number; reason: string; }

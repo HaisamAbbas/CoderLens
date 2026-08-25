@@ -23,12 +23,35 @@ from archaeologist.models.db import init_db
 from archaeologist.routers import api, codemap, health
 
 
+def _reap_orphaned_jobs() -> None:
+    """Any job row still 'running' at startup is orphaned: every job runs in a
+    daemon thread inside this single-worker process, so a restart (deploy, OOM,
+    or `--reload`) kills the thread while the row keeps claiming 'running'. Flip
+    those to 'error' so the UI stops polling a dead job — and, since the Bug
+    Hunter page now re-attaches to any running scan, so it never shows an
+    eternal spinner for work that isn't actually happening."""
+    from sqlalchemy import update
+
+    from archaeologist.models.db import session_scope
+    from archaeologist.models.entities import IngestJob, JiraTicketJob, WeaknessScanJob
+
+    with session_scope() as session:
+        for model in (IngestJob, WeaknessScanJob, JiraTicketJob):
+            session.execute(
+                update(model)
+                .where(model.status == "running")
+                .values(status="error",
+                        error="Interrupted by a server restart before it finished.")
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Creates any tables added to models/entities.py since the DB was last
     # initialized (e.g. a fresh `conversations` table) — a no-op otherwise,
     # since create_all only creates what's missing.
     init_db()
+    _reap_orphaned_jobs()
     yield
 
 

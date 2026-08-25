@@ -112,10 +112,10 @@ export default function Tour() {
 
   return (
     <div className="page wk">
-      <div className="eyebrow">
-        Start here · {wikiQ.data.repo}
+      <div className="eyebrow" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <span>Start here · {wikiQ.data.repo}</span>
         {statusQ.data?.confluence?.configured && (
-          <button className="btn" onClick={() => setPublishOpen(true)} style={{ marginLeft: 10 }}>
+          <button className="btn" onClick={() => setPublishOpen(true)}>
             Publish to Confluence
           </button>
         )}

@@ -89,6 +89,7 @@ export const api = {
   scanWeaknesses: (scanAll = false) =>
     post<{ job_id: string; status: string }>("/api/weaknesses/scan", { scan_all: scanAll }),
   weaknessScanJob: (jobId: string) => get<WeaknessScanJob>(`/api/weaknesses/scan/${jobId}`),
+  currentWeaknessScan: () => get<{ job: WeaknessScanJob | null }>("/api/weaknesses/scan"),
   weaknesses: () => get<WeaknessList>("/api/weaknesses"),
   dismissWeakness: (id: number) => post<{ id: number; status: string }>(`/api/weaknesses/${id}/dismiss`, {}),
   createJiraTickets: (findingIds: number[]) =>

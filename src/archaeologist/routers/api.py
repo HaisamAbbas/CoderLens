@@ -641,6 +641,24 @@ def scan_weaknesses(body: ScanWeaknessesBody) -> dict:
     return {"job_id": job["id"], "status": job["status"]}
 
 
+@router.get("/weaknesses/scan")
+def current_weakness_scan() -> dict:
+    """The active repo's current scan job, so the UI can re-attach after a
+    navigation or a full page reload: the running job if one exists, else the
+    most recent finished one, else null.
+
+    The scan runs server-side in a daemon thread (persisted in
+    weakness_scan_jobs), so it keeps going whether or not any client is
+    watching — losing the in-page job id on unmount used to make it *look*
+    stopped. This lets the page find the live job again and resume its
+    progress indicator."""
+    from archaeologist.services import weakness_scan
+    with session_scope() as s:
+        repo_id = _repo(s).id
+    job = weakness_scan.running_job_for(repo_id) or weakness_scan.latest_job_for(repo_id)
+    return {"job": job}
+
+
 @router.get("/weaknesses/scan/{job_id}")
 def weakness_scan_status(job_id: str) -> dict:
     from archaeologist.services import weakness_scan
