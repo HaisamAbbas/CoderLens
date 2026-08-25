@@ -120,6 +120,14 @@ def test_coerce_non_dict_items_are_dropped():
     assert weaknesses._coerce_finding(None, "a.py", 10) is None  # type: ignore[arg-type]
 
 
+def test_coerce_drops_self_rated_low_confidence():
+    # The model's own "I'm not sure" is the cheapest false-positive filter.
+    assert weaknesses._coerce_finding({**VALID, "confidence": "low"}, "a.py", 100) is None
+    # Anything else (incl. missing) is kept — confidence is not persisted.
+    assert weaknesses._coerce_finding({**VALID, "confidence": "high"}, "a.py", 100) is not None
+    assert weaknesses._coerce_finding(dict(VALID), "a.py", 100) is not None
+
+
 # ---------- _scan_file (LLM mocked at the module boundary) ----------
 
 def _file(content: str, path: str = "src/app.py") -> File:
@@ -128,25 +136,25 @@ def _file(content: str, path: str = "src/app.py") -> File:
 
 def test_scan_file_offline_returns_empty(monkeypatch):
     monkeypatch.setattr(weaknesses, "llm_available", lambda: False)
-    assert weaknesses._scan_file(_file("x = 1\n")) == []
+    assert weaknesses._scan_file(_file("x = 1\n")) == ([], 0)
 
 
 def test_scan_file_parses_and_attaches_file_path(monkeypatch):
     monkeypatch.setattr(weaknesses, "llm_available", lambda: True)
     monkeypatch.setattr(weaknesses, "call_llm", lambda *a, **kw: '{"findings": [' + repr({
         **VALID, "start_line": 1, "end_line": 1}).replace("'", '"') + ']}')
-    found = weaknesses._scan_file(_file("line1\nline2\n"))
-    assert len(found) == 1
+    found, dropped = weaknesses._scan_file(_file("line1\nline2\n"))
+    assert len(found) == 1 and dropped == 0
     assert found[0]["file_path"] == "src/app.py"
 
 
 def test_scan_file_survives_garbage_llm_output(monkeypatch):
     monkeypatch.setattr(weaknesses, "llm_available", lambda: True)
     monkeypatch.setattr(weaknesses, "call_llm", lambda *a, **kw: "total nonsense")
-    assert weaknesses._scan_file(_file("x = 1\n")) == []
+    assert weaknesses._scan_file(_file("x = 1\n")) == ([], 0)
 
 
-def test_scan_file_long_content_is_truncated_in_prompt_only(monkeypatch):
+def test_scan_file_long_content_flags_truncation_out_of_band(monkeypatch):
     captured = {}
 
     def fake_call(system, user, **kw):
@@ -156,10 +164,32 @@ def test_scan_file_long_content_is_truncated_in_prompt_only(monkeypatch):
     monkeypatch.setattr(weaknesses, "llm_available", lambda: True)
     monkeypatch.setattr(weaknesses, "call_llm", fake_call)
     big = _file("//" + "x" * 20000 + "\n")
-    assert weaknesses._scan_file(big) == []
-    assert "# … (truncated)" in captured["user"]
+    assert weaknesses._scan_file(big) == ([], 0)
+    # The truncation is disclosed OUT of band and forbidden as a finding — the
+    # old "# … (truncated)" marker inside the code was quoted back as a "bug".
+    assert "# … (truncated)" not in captured["user"]
+    assert "cut off at the end" in captured["user"]
     # Never mutate File.content itself — only what was sent.
     assert len(big.content) == 20003
+
+
+def test_scan_file_drops_truncation_artifacts_only_when_truncated(monkeypatch):
+    # A truncated file where the model reports a real bug AND a truncation
+    # artifact: the artifact is dropped, the real finding survives, drop counted.
+    monkeypatch.setattr(weaknesses, "llm_available", lambda: True)
+    real = {**VALID, "title": "Off-by-one", "description": "Uses <= where < is meant.",
+            "start_line": 2, "end_line": 2}
+    artifact = {**VALID, "title": "Incomplete function implementation",
+                "description": "The function is truncated mid-body and never returns.",
+                "start_line": 40, "end_line": 40}   # far from the cut; caught by language
+    payload = json.dumps({"findings": [real, artifact]})
+    monkeypatch.setattr(weaknesses, "call_llm", lambda *a, **kw: payload)
+    # A realistic many-line file (so the boundary window is a small tail, not
+    # the whole file) that exceeds MAX_FILE_CHARS → truncated.
+    big = _file("row = 1\n" * 6000)   # 48000 chars, 6000 lines
+    found, dropped = weaknesses._scan_file(big)
+    assert dropped == 1
+    assert [f["title"] for f in found] == ["Off-by-one"]
 
 
 # ---------- cap disclosures ----------
@@ -174,7 +204,7 @@ def test_cap_notes_disclose_cap_and_truncation_but_not_silently(llm_on):
     notes = weaknesses._cap_notes(small[:1], total_code=340, scan_all=False)
     assert any("Capped to 1 of 340" in n and "scan_all=true" in n for n in notes)
 
-    big = [_file("z" * 9000 + "\n")]
+    big = [_file("z" * 21000 + "\n")]   # over the 20000-char per-file budget
     notes2 = weaknesses._cap_notes(big, total_code=1, scan_all=False)
     assert any("truncated" in n for n in notes2)
 
@@ -190,8 +220,8 @@ def test_cap_notes_disclose_offline_mode(monkeypatch):
 def test_scan_files_fans_out_reports_progress_and_sorts(llm_on, monkeypatch):
     def fake_scan(f: File):
         titles = {"b.py": "B finding", "a.py": "A finding"}
-        return [{"file_path": f.path, "start_line": 1, "title": titles[f.path],
-                 "category": "style", "severity": "low"}]
+        return ([{"file_path": f.path, "start_line": 1, "title": titles[f.path],
+                  "category": "style", "severity": "low"}], 0)
 
     monkeypatch.setattr(weaknesses, "_scan_file", fake_scan)
     files = [_file("x\n", "b.py"), _file("y\n", "a.py")]

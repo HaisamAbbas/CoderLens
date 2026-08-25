@@ -26,23 +26,60 @@ from archaeologist.models.entities import CommitFile, File, Weakness
 from archaeologist.rag.llm import call_llm, llm_available, parse_llm_json
 
 MAX_FILES = 50          # per-run ceiling unless scan_all=true lifts it
-MAX_FILE_CHARS = 8000   # per-file content budget sent to the model
+MAX_FILE_CHARS = 20000  # per-file content budget sent to the model. Raised from
+                        # 8000: at 8k (~200 lines) most real files were cut
+                        # mid-function, and the model reliably reported the CUT
+                        # itself as a bug ("incomplete function", "syntax error",
+                        # "uninitialized variable in truncated code") — pure
+                        # hallucination that dominated the high-severity output.
+                        # 20k fits the large majority of source files whole.
 
 WEAKNESS_SYS = """You are a senior code reviewer scanning one source file for weaknesses.
-Look for real, concrete issues in three categories:
-- "logic": bugs, broken edge cases, wrong conditions, resource leaks, race conditions
+Report ONLY real, concrete defects you can prove from the code shown, in three categories:
+- "logic": bugs, broken edge cases, wrong conditions, resource leaks, real race conditions
 - "security": injection, unsafe deserialization, secrets handling, authz gaps, unsafe defaults
 - "style": maintainability hazards that matter (dead branches, dangerous patterns, misleading names)
 
-Rules:
-- Only report what the shown code actually supports — cite exact line numbers from it.
+Evidence bar — this is the whole job:
+- Every finding must name the EXACT trigger: the specific input, state, or call path that
+  makes the code misbehave, and what goes wrong as a result. If you cannot, do not report it.
+- Do NOT report speculation. Phrases like "potential", "may", "could", "might", "consider"
+  are a signal you are guessing — either prove it concretely or drop it.
+- Do NOT flag a "race condition" unless shared mutable state is actually written from two
+  concurrent paths shown here. Single-threaded code (e.g. React components/hooks) has none.
 - No style nits about formatting/quotes; style findings must affect correctness or maintainability.
-- Return NOTHING but JSON: {"findings": [{"title", "description", "category",
-  "severity", "start_line", "end_line", "suggested_fix"}]}
-- "findings" may be [] when the file is clean."""
+
+Truncation — critical:
+- The file may be CUT OFF at the end to fit a size budget. This is NOT a defect.
+- NEVER report truncated/incomplete/cut-off code, a function that appears to stop mid-body,
+  a missing return/closing brace at the end, or a "syntax error" near the end. Those are
+  artifacts of truncation, not bugs. Ignore the final partial construct entirely.
+
+Severity discipline:
+- "high": a demonstrable failure (crash, wrong result, security hole) on a realistic input.
+- "medium": a real defect that fires only under narrower conditions.
+- "low": minor but genuine. Never inflate severity to seem thorough.
+
+Return NOTHING but JSON: {"findings": [{"title", "description", "category",
+  "severity", "confidence", "start_line", "end_line", "suggested_fix"}]}
+- "confidence" is "high" | "medium" | "low" — your honest certainty this is a REAL bug.
+- Prefer returning fewer, certain findings. "findings" may be [] — a clean file is the
+  common case, not a failure. Do not manufacture findings to fill the list."""
 
 _CATEGORIES = {"logic", "security", "style"}
 _SEVERITIES = {"high", "medium", "low"}
+_CONFIDENCES = {"high", "medium", "low"}
+
+# Phrases that mark a finding as an artifact of end-of-file truncation rather
+# than a real defect. Applied ONLY to files we actually cut (a non-truncated
+# file legitimately can have an "incomplete validation" finding); scoping it to
+# truncated files is what keeps this from dropping genuine findings.
+_TRUNCATION_PHRASES = (
+    "truncat", "incomplete", "cut off", "cut-off", "cutoff", "mid-implementation",
+    "mid-definition", "mid-statement", "mid-function", "missing closing",
+    "missing return", "unclosed", "not closed", "dangling", "appears to be cut",
+    "abruptly ends", "ends abruptly",
+)
 
 # Compact extension map — only what a code file is likely to have (wiki.py's
 # _EXT_LANG covers more, but importing wiki here drags its whole graph stack).
@@ -90,11 +127,16 @@ def _coerce_finding(raw: dict, file_path: str, max_line: int) -> dict | None:
     """Strict pre-persistence validation — LLM output becomes a DB row here.
     Wrong/missing category drops (it's the UI partition key); bad severity
     coerces rather than drops (miscalibration isn't a false finding); lines
-    clamp into the actual file."""
+    clamp into the actual file. Self-rated LOW confidence drops: the model's
+    own "I'm not sure this is real" is the cheapest false-positive filter we
+    have, and low-confidence findings were the bulk of the noise."""
     if not isinstance(raw, dict):
         return None
     category = str(raw.get("category", "")).strip().lower()
     if category not in _CATEGORIES:
+        return None
+    confidence = str(raw.get("confidence", "")).strip().lower()
+    if confidence == "low":
         return None
     title = str(raw.get("title", "")).strip()[:300]
     description = str(raw.get("description", "")).strip()[:4000]
@@ -117,28 +159,58 @@ def _coerce_finding(raw: dict, file_path: str, max_line: int) -> dict | None:
             "suggested_fix": str(fix).strip()[:2000] if fix else None}
 
 
-def _scan_file(file: File) -> list[dict]:
+def _is_truncation_artifact(finding: dict, sent_lines: int) -> bool:
+    """True when a finding from a TRUNCATED file is really about the cut, not a
+    bug. Two independent signals: (1) its text uses truncation/incompleteness
+    language, or (2) it points at the last few lines of what we sent — the exact
+    place the cut lands. Only ever called for files we actually truncated."""
+    text = f"{finding['title']} {finding['description']}".lower()
+    if any(p in text for p in _TRUNCATION_PHRASES):
+        return True
+    # The final construct is always partial in a truncated file; findings there
+    # are the cut, not a defect.
+    return finding["start_line"] >= sent_lines - 5
+
+
+def _scan_file(file: File) -> tuple[list[dict], int]:
+    """Returns (kept findings, number dropped as truncation artifacts) so the
+    caller can disclose the drop count rather than silently swallow it."""
     if not llm_available() or not file.content:
-        return []
+        return [], 0
+    truncated = len(file.content) > MAX_FILE_CHARS
     body = file.content[:MAX_FILE_CHARS]
-    suffix = "\n    # … (truncated)" if len(file.content) > MAX_FILE_CHARS else ""
-    user = f"File: {file.path}\n\n```{_lang_of(file.path)}\n{body}{suffix}\n```"
+    # No cosmetic "# … (truncated)" marker inside the code — the model used to
+    # quote it back as evidence of a bug. State the truncation out of band and
+    # forbid reporting it (also reinforced in the system prompt).
+    trunc_note = (
+        "\n\nNote: this file was cut off at the end to fit a size budget. "
+        "The final construct is incomplete BY DESIGN — do not report truncation, "
+        "incomplete code, or end-of-file syntax errors as findings."
+        if truncated else ""
+    )
+    user = f"File: {file.path}\n\n```{_lang_of(file.path)}\n{body}\n```{trunc_note}"
     try:
         raw = call_llm(WEAKNESS_SYS, user, max_tokens=1500, temperature=0.1,
                        label="weakness-scan")
         data = parse_llm_json(raw)
     except Exception:  # noqa: BLE001 - one file's failure never sinks the scan
-        return []
+        return [], 0
     items = data.get("findings")
     if not isinstance(items, list):
-        return []
+        return [], 0
     max_line = file.content.count("\n") + 1
-    out = []
+    sent_lines = body.count("\n") + 1
+    out: list[dict] = []
+    dropped = 0
     for item in items:
         finding = _coerce_finding(item, file.path, max_line)
-        if finding is not None:
-            out.append(finding)
-    return out
+        if finding is None:
+            continue
+        if truncated and _is_truncation_artifact(finding, sent_lines):
+            dropped += 1
+            continue
+        out.append(finding)
+    return out, dropped
 
 
 def _cap_notes(files: list[File], total_code: int, scan_all: bool) -> list[str]:
@@ -170,17 +242,25 @@ def scan_files(files: list[File], total_code: int, scan_all: bool,
     notes = _cap_notes(files, total_code, scan_all)
     findings: list[dict] = []
     done = 0
+    dropped_artifacts = 0
     with ThreadPoolExecutor(max_workers=6) as pool:
         futures = [pool.submit(_scan_file, f) for f in files]
         for future in as_completed(futures):
             try:
-                findings.extend(future.result())
+                file_findings, dropped = future.result()
+                findings.extend(file_findings)
+                dropped_artifacts += dropped
             except Exception:  # noqa: BLE001 - defensive; _scan_file already guards
                 pass
             done += 1
             if on_progress is not None:
                 on_progress(done, len(files))
 
+    if dropped_artifacts:
+        notes.append(
+            f"Discarded {dropped_artifacts} finding(s) that were artifacts of "
+            "end-of-file truncation, not real defects."
+        )
     findings.sort(key=lambda f: (f["file_path"], f["start_line"], f["title"]))
     return findings, notes
 
