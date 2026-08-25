@@ -33,10 +33,15 @@ def _reap_orphaned_jobs() -> None:
     from sqlalchemy import update
 
     from archaeologist.models.db import session_scope
-    from archaeologist.models.entities import IngestJob, JiraTicketJob, WeaknessScanJob
+    from archaeologist.models.entities import (
+        ConfluencePublishJob,
+        IngestJob,
+        JiraTicketJob,
+        WeaknessScanJob,
+    )
 
     with session_scope() as session:
-        for model in (IngestJob, WeaknessScanJob, JiraTicketJob):
+        for model in (IngestJob, WeaknessScanJob, JiraTicketJob, ConfluencePublishJob):
             session.execute(
                 update(model)
                 .where(model.status == "running")
