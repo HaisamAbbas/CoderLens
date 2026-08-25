@@ -9,7 +9,7 @@ LANGUAGE_BY_EXT = {
     ".js": "javascript",
     ".jsx": "javascript",
     ".ts": "typescript",
-    ".tsx": "typescript",
+    ".tsx": "tsx",
     ".go": "go",
     ".rs": "rust",
     ".java": "java",

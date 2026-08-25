@@ -13,7 +13,7 @@ from collections import defaultdict
 
 from sqlalchemy import delete, insert, select
 
-from archaeologist.indexing.symbols import _new_parser
+from archaeologist.indexing.languages import new_parser
 from archaeologist.models.db import init_db, session_scope
 from archaeologist.models.entities import Repo, Symbol, SymbolEdge
 
@@ -25,6 +25,15 @@ STOPLIST = {
     "map", "filter", "sorted", "reversed", "iter", "next", "vars", "dir",
     "min", "max", "sum", "any", "all", "abs", "id", "hash", "callable",
     "property", "staticmethod", "classmethod", "object", "Exception",
+    # JavaScript / TypeScript builtins & ubiquitous globals
+    "console", "require", "JSON", "Promise", "Object", "Array", "String",
+    "Number", "Boolean", "Math", "Date", "Error", "TypeError", "Map", "Set",
+    "Symbol", "Reflect", "parseInt", "parseFloat", "isNaN", "setTimeout",
+    "clearTimeout", "setInterval", "clearInterval", "fetch", "alert",
+    "process", "Buffer", "global", "undefined", "constructor",
+    # Go builtins
+    "make", "new", "append", "copy", "delete", "panic", "recover", "close",
+    "cap", "complex", "imag", "real", "println", "Sprintf",
 }
 MAX_NAME_FANOUT = 8  # a name resolving to more symbols than this is too ambiguous
 
@@ -58,51 +67,100 @@ class References:
         self.bases: set[str] = set()
 
 
-def extract_references(code: str) -> References:
+def extract_references(code: str, language: str = "python") -> References:
     """Extract calls (split by receiver confidence) and base classes referenced
-    inside a symbol's source."""
+    inside a symbol's source. Node-type dispatch per language; the References
+    shape (and everything downstream of it) stays language-agnostic."""
     src = code.encode("utf-8")
-    tree = _new_parser().parse(src)
+    parser = new_parser(language)
+    if parser is None:
+        return References()
+    tree = parser.parse(src)
     refs = References()
 
-    for node in _iter_nodes(tree.root_node):
-        if node.type == "call":
-            fn = node.child_by_field_name("function")
+    if language in ("javascript", "typescript", "tsx"):
+        _collect_refs(tree.root_node, src, refs,
+                      call_type="call_expression", attr_type="member_expression",
+                      obj_field="object", attr_field="property",
+                      class_types={"class_declaration", "abstract_class_declaration"},
+                      heritage_child="class_heritage")
+    elif language == "go":
+        _collect_refs(tree.root_node, src, refs,
+                      call_type="call_expression", attr_type="selector_expression",
+                      obj_field="operand", attr_field="field",
+                      class_types=set(), heritage_child=None)
+    else:
+        _collect_refs(tree.root_node, src, refs,
+                      call_type="call", attr_type="attribute",
+                      obj_field="object", attr_field="attribute",
+                      class_types={"class_definition"}, heritage_child=None,
+                      heritage_field="superclasses")
+    return refs
+
+
+def _collect_refs(node, src: bytes, refs: References,
+                  call_type: str, attr_type: str, obj_field: str, attr_field: str,
+                  class_types: set[str], heritage_child: str | None,
+                  heritage_field: str | None = None) -> None:
+    """One walker for all three grammars — they agree on the shape that matters:
+    calls have a `function` field and attribute/selector access splits into
+    (object, attr); only the node-type/field NAMES differ per grammar. Class
+    bases come either from a field (Python `superclasses`) or a named child
+    (JS/TS `class_heritage`)."""
+    for n in _iter_nodes(node):
+        if n.type == call_type:
+            fn = n.child_by_field_name("function")
             if fn is None:
                 continue
             if fn.type == "identifier":
                 name = _text(fn, src)
                 if not name.startswith("__"):
                     refs.plain.add(name)
-            elif fn.type == "attribute":
-                obj = fn.child_by_field_name("object")
-                attr = fn.child_by_field_name("attribute")
+            elif fn.type == attr_type:
+                obj = fn.child_by_field_name(obj_field)
+                attr = fn.child_by_field_name(attr_field)
                 if attr is None:
                     continue
                 attr_name = _text(attr, src)
                 if attr_name.startswith("__"):
                     continue
-                if obj is not None and obj.type == "identifier":
+                if obj is not None and obj.type in ("identifier", "this"):
+                    # `this` is its own node type in the JS grammar, not an
+                    # identifier — both mean "receiver known".
                     obj_name = _text(obj, src)
-                    if obj_name == "self":
+                    if obj_name == "self" or obj_name == "this":
                         refs.self_calls.add(attr_name)
                     else:
                         refs.recv[obj_name].add(attr_name)
                 else:
-                    # Nested attribute chain (e.g. `self.app.route(...)`) — the
-                    # receiver isn't a simple name, so fall back to name-only.
+                    # Nested chain (e.g. `self.app.route(...)` / `a.b.c()`) —
+                    # receiver isn't a simple name, fall back to name-only.
                     refs.plain.add(attr_name)
-        elif node.type == "class_definition":
-            supers = node.child_by_field_name("superclasses")
-            if supers is not None:
-                for arg in supers.named_children:
-                    if arg.type == "identifier":
-                        refs.bases.add(_text(arg, src))
-                    elif arg.type == "attribute":
-                        attr = arg.child_by_field_name("attribute")
-                        if attr is not None:
-                            refs.bases.add(_text(attr, src))
-    return refs
+        elif n.type in class_types:
+            supers = (n.child_by_field_name(heritage_field) if heritage_field
+                      else next((c for c in n.named_children if c.type == heritage_child), None)
+                      if heritage_child else None)
+            if supers is None:
+                continue
+            items = supers.named_children if heritage_field else _heritage_items(supers)
+            for arg in items:
+                if arg.type == "identifier":
+                    refs.bases.add(_text(arg, src))
+                elif arg.type == attr_type:
+                    attr = arg.child_by_field_name(attr_field)
+                    if attr is not None:
+                        refs.bases.add(_text(attr, src))
+
+
+def _heritage_items(heritage_node):
+    """JS `class_heritage` wraps its entries in `extends_clause` /
+    `implements_clause` children — yield the identifier-bearing leaves."""
+    for child in heritage_node.named_children:
+        if child.type in ("extends_clause", "implements_clause"):
+            yield from [gc for gc in child.named_children
+                        if gc.type in ("identifier", "member_expression")]
+        elif child.type in ("identifier", "member_expression"):
+            yield child
 
 
 # Confidence tiers (mirrors the 1.0 / ~0.9 / 0.5 scheme common to name-based
@@ -168,7 +226,7 @@ def build_graph(repo_id: int | None = None) -> dict:
         class_bases: dict[str, set[str]] = defaultdict(set)
         for s in symbols:
             if s.kind == "class" and s.code:
-                class_bases[s.name] |= extract_references(s.code).bases
+                class_bases[s.name] |= extract_references(s.code, s.language).bases
 
         session.execute(delete(SymbolEdge).where(SymbolEdge.repo_id == repo.id))
 
@@ -186,7 +244,7 @@ def build_graph(repo_id: int | None = None) -> dict:
         for s in symbols:
             if s.kind == "import" or not s.code:
                 continue
-            refs = extract_references(s.code)
+            refs = extract_references(s.code, s.language)
             owner = s.qualified_name.rsplit(".", 1)[0] if (
                 s.kind == "method" and "." in s.qualified_name) else None
 
