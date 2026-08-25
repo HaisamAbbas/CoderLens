@@ -102,7 +102,12 @@ def _run(job_id: str, repo_url: str, token: str = "") -> None:
 def _pipeline(job_id: str, repo_url: str, token: str = "") -> None:
     # --- 1. Clone + walk the five streams into Postgres ---
     _update(job_id, step="clone", message=f"Cloning and walking {repo_url} …")
-    stats = ingest_repository(repo_url=repo_url, token=token)
+    # Web-triggered ingests cap git history at the 2,000 most recent commits:
+    # commit.stats() runs a real diff per commit, and at express-scale (~8.5k
+    # commits) an uncapped walk looks hung for 30+ minutes. 2,000 keeps the
+    # churn/coupling/hotspot signals fully populated; `None` (all history)
+    # remains available to the CLI caller.
+    stats = ingest_repository(repo_url=repo_url, token=token, max_commits=2000)
     job_stats = {
         "files": stats.files, "commits": stats.commits,
         "issues": stats.issues, "prs": stats.prs,
