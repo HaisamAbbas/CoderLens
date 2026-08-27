@@ -8,6 +8,12 @@
               reuses the same account already paying for the LLM. No model
               loaded in-process, so it's the one that actually helps the
               memory-constrained deploy case.
+- "aihubmix": AIHubMix aggregator, hosted, OpenAI-compatible, fixed public
+              endpoint (no per-workspace URL). Reuses aihubmix_api_key.
+- "openrouter": OpenRouter, hosted, OpenAI-compatible. The default model is
+              genuinely free but caps input at 512 tokens/text (hard error,
+              not silent truncation) — long symbol bodies get truncated
+              before embedding. Reuses openrouter_api_key.
 
 Every embedder exposes `.dim`, `.embed_documents(texts)`, and `.embed_query(text)`,
 so the indexer and retriever don't care which one is active.
@@ -134,6 +140,100 @@ class AlibabaEmbedder:
         return self._embed([text])[0]
 
 
+class AihubmixEmbedder:
+    """AIHubMix hosted embeddings (OpenAI-compatible `/embeddings` endpoint,
+    fixed public URL — unlike Alibaba's workspace-specific one). Reuses
+    aihubmix_api_key, the same key already paying for the LLM. No `dimensions`
+    param sent — unlike Alibaba's Matryoshka-configurable models, the default
+    embedding model here (jina-embeddings-v2-base-code) doesn't support
+    truncation, so the dimension is whatever the model naturally returns."""
+
+    def __init__(self) -> None:
+        if not settings.aihubmix_api_key:
+            raise RuntimeError("AIHUBMIX_API_KEY not set in .env")
+        self.model = settings.aihubmix_embedding_model
+        self.dim = settings.aihubmix_embedding_dim
+        self._url = "https://aihubmix.com/v1/embeddings"
+        self._headers = {"Authorization": f"Bearer {settings.aihubmix_api_key}"}
+
+    def _embed(self, texts: list[str], progress: bool = False) -> list[list[float]]:
+        out: list[list[float]] = []
+        n = len(texts)
+        with httpx.Client(timeout=30.0) as client:
+            for start in range(0, n, EMBED_BATCH):
+                chunk = texts[start : start + EMBED_BATCH]
+                payload = {"model": self.model, "input": chunk}
+                for attempt in range(MAX_RETRIES):
+                    resp = client.post(self._url, json=payload, headers=self._headers)
+                    if resp.status_code == 429:
+                        time.sleep(min(60, 5 * (attempt + 1)))
+                        continue
+                    resp.raise_for_status()
+                    data = sorted(resp.json()["data"], key=lambda d: d["index"])
+                    out.extend(d["embedding"] for d in data)
+                    break
+                else:
+                    raise RuntimeError(f"AIHubMix embeddings: exhausted retries at batch {start}")
+                if progress:
+                    print(f"      embedded {min(start + EMBED_BATCH, n)}/{n}", flush=True)
+        return out
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts, progress=True)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed([text])[0]
+
+
+class OpenRouterEmbedder:
+    """OpenRouter hosted embeddings (OpenAI-compatible /embeddings endpoint,
+    fixed public URL). Reuses openrouter_api_key, the same key already used
+    for chat completions. The default free model (liquid/lfm-2.5-embedding-
+    350m:free) HARD-ERRORS (HTTP 400, confirmed live — not a silent
+    truncation) past 512 tokens per input, small next to a code symbol's full
+    body — every text is truncated to a conservative char budget before
+    sending, which does mean long symbols get embedded on their opening
+    portion only, not their full body."""
+
+    _MAX_CHARS = 1800  # ~512 tokens at a conservative ~3.5 chars/token
+
+    def __init__(self) -> None:
+        if not settings.openrouter_api_key:
+            raise RuntimeError("OPENROUTER_API_KEY not set in .env")
+        self.model = settings.openrouter_embedding_model
+        self.dim = settings.openrouter_embedding_dim
+        self._url = "https://openrouter.ai/api/v1/embeddings"
+        self._headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"}
+
+    def _embed(self, texts: list[str], progress: bool = False) -> list[list[float]]:
+        out: list[list[float]] = []
+        n = len(texts)
+        with httpx.Client(timeout=30.0) as client:
+            for start in range(0, n, EMBED_BATCH):
+                chunk = [t[: self._MAX_CHARS] for t in texts[start : start + EMBED_BATCH]]
+                payload = {"model": self.model, "input": chunk}
+                for attempt in range(MAX_RETRIES):
+                    resp = client.post(self._url, json=payload, headers=self._headers)
+                    if resp.status_code == 429:
+                        time.sleep(min(60, 5 * (attempt + 1)))
+                        continue
+                    resp.raise_for_status()
+                    data = sorted(resp.json()["data"], key=lambda d: d["index"])
+                    out.extend(d["embedding"] for d in data)
+                    break
+                else:
+                    raise RuntimeError(f"OpenRouter embeddings: exhausted retries at batch {start}")
+                if progress:
+                    print(f"      embedded {min(start + EMBED_BATCH, n)}/{n}", flush=True)
+        return out
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts, progress=True)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed([text])[0]
+
+
 def get_embedder():
     """Return the active embedder, or None if configured provider is unavailable."""
     provider = settings.embedding_provider.lower()
@@ -143,4 +243,8 @@ def get_embedder():
         return VoyageEmbedder() if settings.voyage_api_key else None
     if provider == "alibaba":
         return AlibabaEmbedder() if settings.alibaba_api_key and settings.alibaba_base_url else None
+    if provider == "aihubmix":
+        return AihubmixEmbedder() if settings.aihubmix_api_key else None
+    if provider == "openrouter":
+        return OpenRouterEmbedder() if settings.openrouter_api_key else None
     return None

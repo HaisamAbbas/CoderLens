@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # --- LLM (reasoning / agent) — pluggable provider ---
     # "auto" (default): use a hosted key if one is set, else a local Ollama model
     # (no API key, no cost), else run in offline retrieval-only mode. Explicit
-    # choices: "gemini" | "anthropic" | "openrouter" | "alibaba" | "ollama".
+    # choices: "gemini" | "anthropic" | "openrouter" | "alibaba" | "aihubmix" | "ollama".
     llm_provider: str = Field(default="auto")
     gemini_api_key: str = Field(default="")
     gemini_model: str = Field(default="gemini-2.5-flash")
@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     alibaba_api_key: str = Field(default="")
     alibaba_base_url: str = Field(default="")
     alibaba_model: str = Field(default="qwen-flash")
+    # AIHubMix — OpenAI-compatible aggregator, one key routes to many hosted
+    # models (GLM, Qwen, OpenAI, Claude, ...) via a single FIXED public
+    # endpoint (unlike Alibaba's workspace-specific URL, so no base-url setting
+    # is needed here).
+    aihubmix_api_key: str = Field(default="")
+    # minimax-m3-free — confirmed live: genuinely free (input/output/cache_read
+    # all $0 in AIHubMix's own catalog), 1M+ context, reasoning + long-context.
+    aihubmix_model: str = Field(default="minimax-m3-free")
     # Local, API-key-free LLM served by Ollama (docker compose up -d; the first
     # boot pulls the model, ~5 GB). Any OpenAI-style endpoint also works.
     ollama_base_url: str = Field(default="http://localhost:11434")
@@ -72,6 +80,17 @@ class Settings(BaseSettings):
     # live); v3/v4 both work and default to 1024 dims (Matryoshka-configurable).
     alibaba_embedding_model: str = Field(default="text-embedding-v3")
     alibaba_embedding_dim: int = Field(default=1024)
+    # AIHubMix, code-tuned (jina-embeddings-v2-base-code) — reuses aihubmix_api_key.
+    # Dim verified live below, not guessed (AIHubMix's own docs explicitly warn
+    # not to assume a model's parameters without a real call).
+    aihubmix_embedding_model: str = Field(default="jina-embeddings-v2-base-code")
+    aihubmix_embedding_dim: int = Field(default=768)
+    # OpenRouter — genuinely free (confirmed live), reuses openrouter_api_key.
+    # 1024-dim confirmed live. Hard-errors (400, not silent truncation) past
+    # 512 tokens/input — every text is truncated before sending, see
+    # OpenRouterEmbedder in retrieval/embeddings.py.
+    openrouter_embedding_model: str = Field(default="liquid/lfm-2.5-embedding-350m:free")
+    openrouter_embedding_dim: int = Field(default=1024)
     # Seconds to wait between embedding batches. Free tier (no payment method) is
     # 3 RPM / 10K TPM — set ~42. With a payment method, leave 0 (standard limits).
     voyage_request_delay: float = Field(default=0.0)
@@ -151,6 +170,10 @@ class Settings(BaseSettings):
             return self.voyage_dim
         if provider == "alibaba":
             return self.alibaba_embedding_dim
+        if provider == "aihubmix":
+            return self.aihubmix_embedding_dim
+        if provider == "openrouter":
+            return self.openrouter_embedding_dim
         return self.local_embedding_dim
 
     @property

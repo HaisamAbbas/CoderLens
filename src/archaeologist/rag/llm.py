@@ -50,6 +50,8 @@ def resolve_provider() -> str | None:
         return "openrouter" if settings.openrouter_api_key else None
     if raw == "alibaba":
         return "alibaba" if settings.alibaba_api_key and settings.alibaba_base_url else None
+    if raw == "aihubmix":
+        return "aihubmix" if settings.aihubmix_api_key else None
     if raw == "ollama":
         return "ollama" if ollama_available() else None
     # "auto" (or empty): hosted key first, then local, then offline.
@@ -61,6 +63,8 @@ def resolve_provider() -> str | None:
         return "openrouter"
     if settings.alibaba_api_key and settings.alibaba_base_url:
         return "alibaba"
+    if settings.aihubmix_api_key:
+        return "aihubmix"
     return "ollama" if ollama_available() else None
 
 
@@ -83,6 +87,8 @@ def active_model() -> str:
         return settings.openrouter_model
     if provider == "alibaba":
         return settings.alibaba_model
+    if provider == "aihubmix":
+        return settings.aihubmix_model
     if provider == "ollama":
         return settings.ollama_model
     return "none"
@@ -107,6 +113,8 @@ def call_llm(system: str, user: str, max_tokens: int = 1024, temperature: float 
             out = _call_openrouter(system, user, max_tokens, temperature)
         elif provider == "alibaba":
             out = _call_alibaba(system, user, max_tokens, temperature)
+        elif provider == "aihubmix":
+            out = _call_aihubmix(system, user, max_tokens, temperature)
         elif provider == "ollama":
             out = _call_ollama(system, user, max_tokens, temperature)
         else:  # pragma: no cover - resolve_provider guards this
@@ -270,14 +278,55 @@ def _call_alibaba(system: str, user: str, max_tokens: int, temperature: float) -
     raise RuntimeError(f"Alibaba Model Studio request failed: {last_exc}") from last_exc
 
 
+_AIHUBMIX_URL = "https://aihubmix.com/v1"
+
+
+def _call_aihubmix(system: str, user: str, max_tokens: int, temperature: float) -> str:
+    """AIHubMix — OpenAI-compatible aggregator, one key routes to many hosted
+    models (GLM, Qwen, OpenAI, Claude, ...) behind a single fixed public
+    endpoint, unlike Alibaba's workspace-specific URL."""
+    if not settings.aihubmix_api_key:
+        raise RuntimeError("AIHUBMIX_API_KEY not set in .env")
+    import httpx
+
+    url = f"{_AIHUBMIX_URL}/chat/completions"
+    headers = {"Authorization": f"Bearer {settings.aihubmix_api_key}"}
+    payload = {
+        "model": settings.aihubmix_model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = httpx.post(url, json=payload, headers=headers, timeout=90.0)
+            if resp.status_code == 429 and attempt < 2:
+                time.sleep(5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            choice = (data.get("choices") or [{}])[0]
+            return (choice.get("message") or {}).get("content") or ""
+        except Exception as exc:  # noqa: BLE001 - retry transient failures
+            last_exc = exc
+            if attempt == 2:
+                break
+            time.sleep(3 * (attempt + 1))
+    raise RuntimeError(f"AIHubMix request failed: {last_exc}") from last_exc
+
+
 def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature: float = 0.0,
                      label: str = ""):
     """Like `call_llm`, but yields text deltas as they arrive instead of
     returning one blocking string. True token streaming is implemented for the
-    OpenAI-compatible providers (alibaba, openrouter) and ollama; gemini/
-    anthropic/unknown fall back to a single chunk containing the full answer
-    (a correct, if non-incremental, degradation — callers just see one big
-    delta instead of many small ones)."""
+    OpenAI-compatible providers (alibaba, aihubmix, openrouter) and ollama;
+    gemini/anthropic/unknown fall back to a single chunk containing the full
+    answer (a correct, if non-incremental, degradation — callers just see one
+    big delta instead of many small ones)."""
     from archaeologist import telemetry
 
     provider = resolve_provider()
@@ -293,6 +342,12 @@ def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature:
                 f"{settings.alibaba_base_url.rstrip('/')}/chat/completions",
                 {"Authorization": f"Bearer {settings.alibaba_api_key}"},
                 settings.alibaba_model, system, user, max_tokens, temperature,
+            )
+        elif provider == "aihubmix":
+            gen = _stream_openai_compat(
+                f"{_AIHUBMIX_URL}/chat/completions",
+                {"Authorization": f"Bearer {settings.aihubmix_api_key}"},
+                settings.aihubmix_model, system, user, max_tokens, temperature,
             )
         elif provider == "openrouter":
             gen = _stream_openai_compat(
