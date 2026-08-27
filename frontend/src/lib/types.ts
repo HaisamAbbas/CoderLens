@@ -48,6 +48,11 @@ export interface ArchDelta {
   base: { ref: string; sha: string; date: string; subject: string };
   head: { ref: string; sha: string; date: string; subject: string };
   before: ArchShape; after: ArchShape;
+  /** Module -> module dependencies aggregated from the symbol graph. They
+   *  describe the INGESTED commit, not necessarily the head being compared —
+   *  `edges_live` says whether those are the same. */
+  module_edges: { source: string; target: string; weight: number }[];
+  edges_live: boolean;
   mermaid: string | null;
   delta: {
     package: { before: string; after: string } | null;

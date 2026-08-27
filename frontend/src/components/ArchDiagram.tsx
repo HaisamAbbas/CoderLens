@@ -1,16 +1,19 @@
-/** An architecture diagram drawn as real SVG — typed cards with a title and a
- *  subtitle, grouped inside a labelled boundary, with labelled edges and a
- *  legend.
+/** A layered architecture diagram: typed cards laid out in dependency order,
+ *  wired with real edges, inside a labelled boundary.
  *
- *  Not Mermaid. Mermaid lays out flowcharts, and a flowchart node is a shape
- *  with a string in it; there is nowhere to put a second line of detail, a
- *  category colour, a dashed boundary around a subset of nodes, or a legend
- *  explaining what the colours mean. Drawing the SVG directly costs a layout
- *  pass and buys all of that.
+ *  Same layout idea as CodemapView — columns by depth, each column centred
+ *  vertically, bezier edges between them — because that is what turns a set of
+ *  boxes into something you can read a direction out of. The difference is
+ *  where the depth comes from: the codemap gets an explicit `step` per node,
+ *  while here it is derived by longest-path layering over module dependencies
+ *  aggregated from the symbol graph.
  *
- *  Every colour is written as a literal attribute rather than a CSS class, so
- *  the serialized markup is self-contained: export needs no stylesheet, and
- *  there is no <foreignObject> to stop a canvas rasterizing it.
+ *  Not Mermaid, and not a grid. A grid shows which modules exist; it cannot
+ *  show that `channels` sits upstream of `tools` and `state`.
+ *
+ *  Every colour is a literal attribute rather than a CSS class, so the
+ *  serialized SVG stands alone for export: no stylesheet to carry, and no
+ *  foreignObject to stop a canvas rasterizing it.
  */
 
 import { useMemo, useRef, useState } from "react";
@@ -22,35 +25,42 @@ export interface DiagramNode {
   id: string;
   title: string;
   subtitle: string;
-  /** Dot-separated specifics — the actual file names in the module. What makes
-   *  a card worth reading rather than a labelled rectangle. */
+  /** Dot-separated specifics — the actual file names in the module. */
   detail: string;
   tone: Tone;
+  /** Ranking weight, used to decide what to draw when there are too many. */
+  weight: number;
 }
 export interface DiagramEdge {
   from: string;
   to: string;
   label: string;
+  /** Thicker line for a heavier dependency. */
+  weight?: number;
+  /** Files that moved between modules, drawn distinctly from dependencies. */
+  kind?: "dep" | "move";
 }
 
-/** Palette per tone: card fill, border, and the accent chip down the left edge.
- *  Two variants so the diagram reads on either theme rather than being a dark
- *  rectangle punched into a light page. */
 const TONES: Record<Tone, { light: [string, string, string]; dark: [string, string, string] }> = {
   added:   { light: ["#f0fdf4", "#16a34a", "#22c55e"], dark: ["#0e2a1a", "#22c55e", "#4ade80"] },
   removed: { light: ["#fef2f2", "#dc2626", "#ef4444"], dark: ["#2b1113", "#ef4444", "#f87171"] },
   changed: { light: ["#fffbeb", "#d97706", "#f59e0b"], dark: ["#2c210a", "#f59e0b", "#fbbf24"] },
-  kept:    { light: ["#f8fafc", "#94a3b8", "#cbd5e1"], dark: ["#141a24", "#475569", "#64748b"] },
+  kept:    { light: ["#f8fafc", "#64748b", "#94a3b8"], dark: ["#141a24", "#475569", "#64748b"] },
 };
-
 const TONE_LABEL: Record<Tone, string> = {
   added: "added", removed: "removed", changed: "files added or removed", kept: "unchanged",
 };
 
-// Card metrics. Fixed sizes keep the layout deterministic — the same delta must
-// always draw the same diagram, or an export taken twice would differ.
-const CARD_W = 232, CARD_H = 84, GAP_X = 30, GAP_Y = 28;
-const GROUP_PAD = 30, HEAD_H = 86, LEGEND_H = 52, MARGIN = 26;
+// Fixed metrics keep layout deterministic: the same delta must always draw the
+// same diagram, or two exports of one comparison would differ.
+const NW = 216, NH = 82, COLGAP = 104, GAPY = 22, PAD = 34;
+const HEAD_H = 92, LEGEND_H = 54;
+
+/** Cap on drawn cards. Past roughly this many the diagram stops being readable
+ *  and becomes a wall — the fact lists below the diagram carry the complete
+ *  data, so truncating the picture loses nothing that isn't stated elsewhere. */
+const MAX_NODES = 14;
+const MAX_EDGES = 20;
 
 const isDarkNow = () =>
   document.documentElement.getAttribute("data-theme") === "dark"
@@ -59,8 +69,27 @@ const isDarkNow = () =>
 
 const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
+/** Longest-path layering. Modules that depend on nothing visible start at 0;
+ *  every other module sits one column right of its deepest dependency. Cyclic
+ *  imports are normal in real code, so the relaxation is capped rather than
+ *  assuming a DAG — a cycle settles instead of looping forever. */
+function layerOf(ids: string[], edges: DiagramEdge[]): Map<string, number> {
+  const layer = new Map(ids.map((id) => [id, 0]));
+  const deps = edges.filter((e) => e.kind !== "move");
+  for (let pass = 0; pass < ids.length; pass++) {
+    let moved = false;
+    for (const e of deps) {
+      const a = layer.get(e.from), b = layer.get(e.to);
+      if (a == null || b == null) continue;
+      if (b < a + 1) { layer.set(e.to, a + 1); moved = true; }
+    }
+    if (!moved) break;
+  }
+  return layer;
+}
+
 export default function ArchDiagram({
-  title, subtitle, groupLabel, nodes, edges, filename,
+  title, subtitle, groupLabel, nodes, edges, filename, footnote,
 }: {
   title: string;
   subtitle: string;
@@ -68,45 +97,67 @@ export default function ArchDiagram({
   nodes: DiagramNode[];
   edges: DiagramEdge[];
   filename: string;
+  footnote?: string;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [busy, setBusy] = useState("");
   const dark = isDarkNow();
 
   const ui = dark
-    ? { bg: "#0b0f16", panel: "#0e131c", line: "#1e293b", text: "#e2e8f0",
-        muted: "#94a3b8", faint: "#64748b", edge: "#5eead4" }
-    : { bg: "#ffffff", panel: "#fbfcfe", line: "#e2e8f0", text: "#0f172a",
-        muted: "#64748b", faint: "#94a3b8", edge: "#0d9488" };
+    ? { bg: "#0b0f16", panel: "#0e131c", line: "#243244", text: "#e2e8f0",
+        muted: "#94a3b8", faint: "#64748b", dep: "#38bdf8", move: "#f472b6" }
+    : { bg: "#ffffff", panel: "#fafbfd", line: "#dbe3ec", text: "#0f172a",
+        muted: "#64748b", faint: "#94a3b8", dep: "#0284c7", move: "#db2777" };
 
-  const layout = useMemo(() => {
-    // Near-square grid, capped at 4 columns so cards stay readable and the
-    // diagram stays a sensible aspect ratio for a share card.
-    const cols = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(nodes.length || 1))));
-    const rows = Math.max(1, Math.ceil(nodes.length / cols));
+  const view = useMemo(() => {
+    // Keep every module the delta has something to say about, then fill the
+    // remaining budget with the heaviest ones so the picture still shows the
+    // system the change sits inside.
+    const story = nodes.filter((n) => n.tone !== "kept");
+    const rest = nodes.filter((n) => n.tone === "kept").sort((a, b) => b.weight - a.weight);
+    const shown = [...story, ...rest].slice(0, MAX_NODES);
+    const keep = new Set(shown.map((n) => n.id));
+    const hidden = nodes.length - shown.length;
+
+    const live = edges.filter((e) => keep.has(e.from) && keep.has(e.to) && e.from !== e.to);
+    const deps = live.filter((e) => e.kind !== "move")
+      .sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0)).slice(0, MAX_EDGES);
+    const moves = live.filter((e) => e.kind === "move");
+    const drawn = [...deps, ...moves];
+
+    const layer = layerOf(shown.map((n) => n.id), drawn);
+    const byLayer = new Map<number, DiagramNode[]>();
+    for (const n of shown) {
+      const l = layer.get(n.id) ?? 0;
+      (byLayer.get(l) ?? byLayer.set(l, []).get(l)!).push(n);
+    }
+    const cols = [...byLayer.keys()].sort((a, b) => a - b);
+    const maxRows = Math.max(1, ...cols.map((c) => byLayer.get(c)!.length));
+    const totalH = maxRows * (NH + GAPY) - GAPY;
+
     const pos = new Map<string, { x: number; y: number }>();
-    nodes.forEach((n, i) => {
-      pos.set(n.id, {
-        x: MARGIN + GROUP_PAD + (i % cols) * (CARD_W + GAP_X),
-        y: HEAD_H + GROUP_PAD + Math.floor(i / cols) * (CARD_H + GAP_Y),
+    cols.forEach((c, ci) => {
+      const col = byLayer.get(c)!.slice().sort((a, b) => b.weight - a.weight);
+      const colH = col.length * (NH + GAPY) - GAPY;
+      const offY = HEAD_H + PAD + (totalH - colH) / 2;
+      col.forEach((n, i) => {
+        pos.set(n.id, { x: PAD + ci * (NW + COLGAP), y: offY + i * (NH + GAPY) });
       });
     });
-    const gridW = cols * CARD_W + (cols - 1) * GAP_X;
-    const gridH = rows * CARD_H + (rows - 1) * GAP_Y;
-    const groupW = gridW + GROUP_PAD * 2;
-    const groupH = gridH + GROUP_PAD * 2;
+
+    const groupW = cols.length * (NW + COLGAP) - COLGAP + PAD * 2;
     return {
-      pos, cols,
-      groupX: MARGIN, groupY: HEAD_H, groupW, groupH,
-      width: groupW + MARGIN * 2,
-      height: HEAD_H + groupH + LEGEND_H + MARGIN,
+      shown, drawn, pos, hidden,
+      width: groupW + PAD * 2,
+      height: HEAD_H + totalH + PAD * 2 + LEGEND_H,
+      groupW, groupH: totalH + PAD * 2,
     };
-  }, [nodes]);
+  }, [nodes, edges]);
 
   const tonesUsed = useMemo(() => {
-    const seen = new Set<Tone>(nodes.map((n) => n.tone));
+    const seen = new Set<Tone>(view.shown.map((n) => n.tone));
     return (["added", "removed", "changed", "kept"] as Tone[]).filter((t) => seen.has(t));
-  }, [nodes]);
+  }, [view]);
 
   const run = (kind: string, fn: () => void | Promise<void>) => async () => {
     if (busy || !svgRef.current) return;
@@ -114,7 +165,7 @@ export default function ArchDiagram({
     try { await fn(); } finally { setBusy(""); }
   };
 
-  const { width, height } = layout;
+  const { width, height } = view;
 
   return (
     <div className="axd">
@@ -138,89 +189,95 @@ export default function ArchDiagram({
           aria-label={`${title} — ${subtitle}`}
           fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
         >
-          <rect x={0} y={0} width={width} height={height} fill={ui.bg} rx={10} />
+          <defs>
+            <marker id="axd-dep" viewBox="0 0 10 10" refX={9} refY={5}
+                    markerWidth={5.5} markerHeight={5.5} orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={ui.dep} />
+            </marker>
+            <marker id="axd-move" viewBox="0 0 10 10" refX={9} refY={5}
+                    markerWidth={5.5} markerHeight={5.5} orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={ui.move} />
+            </marker>
+          </defs>
 
-          {/* header */}
-          <text x={MARGIN} y={36} fill={ui.text} fontSize={21} fontWeight={700}>
-            {trunc(title, 54)}
+          <rect x={0} y={0} width={width} height={height} fill={ui.bg} rx={12} />
+
+          <text x={PAD} y={38} fill={ui.text} fontSize={21} fontWeight={700}>
+            {trunc(title, 52)}
           </text>
-          <text x={MARGIN} y={60} fill={ui.muted} fontSize={12}>
-            {trunc(subtitle, 100)}
+          <text x={PAD} y={62} fill={ui.muted} fontSize={12}>
+            {trunc(subtitle, 104)}
           </text>
-          <text x={width - MARGIN} y={34} fill={ui.faint} fontSize={10}
+          <text x={width - PAD} y={36} fill={ui.faint} fontSize={10}
                 textAnchor="end" letterSpacing={1.6}>
             ARCH DELTA
           </text>
 
-          {/* the package boundary */}
-          <rect
-            x={layout.groupX} y={layout.groupY}
-            width={layout.groupW} height={layout.groupH}
-            rx={12} fill={ui.panel} stroke={ui.line} strokeWidth={1}
-            strokeDasharray="5 4"
-          />
-          <text x={layout.groupX + 12} y={layout.groupY + 16} fill={ui.faint} fontSize={10}>
-            {trunc(groupLabel, 60)}
+          <rect x={PAD - 12} y={HEAD_H} width={view.groupW} height={view.groupH}
+                rx={14} fill={ui.panel} stroke={ui.line} strokeWidth={1} strokeDasharray="6 5" />
+          <text x={PAD} y={HEAD_H + 18} fill={ui.faint} fontSize={10}>
+            {trunc(groupLabel, 64)}
           </text>
 
-          {/* edges first, so cards paint over their ends */}
-          <defs>
-            <marker id="axd-arrow" viewBox="0 0 10 10" refX={9} refY={5}
-                    markerWidth={6} markerHeight={6} orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill={ui.edge} />
-            </marker>
-          </defs>
-          {edges.map((e) => {
-            const a = layout.pos.get(e.from);
-            const b = layout.pos.get(e.to);
+          {view.drawn.map((e) => {
+            const a = view.pos.get(e.from), b = view.pos.get(e.to);
             if (!a || !b) return null;
-            const ax = a.x + CARD_W / 2, ay = a.y + CARD_H / 2;
-            const bx = b.x + CARD_W / 2, by = b.y + CARD_H / 2;
-            // Bowed away from the straight line so two cards in the same row
-            // don't have their connector hidden under the cards between them.
-            const mx = (ax + bx) / 2, my = (ay + by) / 2 - Math.max(26, Math.abs(bx - ax) * 0.16);
+            const move = e.kind === "move";
+            const colour = move ? ui.move : ui.dep;
+            const forward = b.x > a.x;
+            // Leave from the right edge going forward, from the left when the
+            // edge points back up the layering — a cycle drawn as a straight
+            // line through the cards is unreadable.
+            const x1 = forward ? a.x + NW : a.x, y1 = a.y + NH / 2;
+            const x2 = forward ? b.x : b.x + NW, y2 = b.y + NH / 2;
+            const mx = (x1 + x2) / 2;
+            const d = forward
+              ? `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
+              : `M ${x1} ${y1} C ${x1 - 46} ${y1 - 34}, ${x2 + 46} ${y2 - 34}, ${x2} ${y2}`;
+            const w = Math.min(3, 1 + Math.log2(1 + (e.weight ?? 1)) / 2.6);
             return (
-              <g key={`${e.from}->${e.to}`}>
-                <path d={`M ${ax} ${ay} Q ${mx} ${my} ${bx} ${by}`}
-                      fill="none" stroke={ui.edge} strokeWidth={1.4}
-                      strokeDasharray="4 3" markerEnd="url(#axd-arrow)" opacity={0.85} />
-                <text x={mx} y={my - 5} fill={ui.edge} fontSize={9.5} textAnchor="middle">
-                  {trunc(e.label, 26)}
-                </text>
+              <g key={`${e.kind ?? "dep"}-${e.from}-${e.to}`}>
+                <path d={d} fill="none" stroke={colour} strokeWidth={move ? 1.6 : w}
+                      strokeDasharray={move ? "5 4" : undefined}
+                      markerEnd={`url(#${move ? "axd-move" : "axd-dep"})`}
+                      opacity={move ? 0.95 : 0.55} />
+                {e.label && (
+                  <text x={mx} y={(y1 + y2) / 2 - 7} fill={colour} fontSize={9}
+                        textAnchor="middle" opacity={0.95}>
+                    {trunc(e.label, 22)}
+                  </text>
+                )}
               </g>
             );
           })}
 
-          {/* cards */}
-          {nodes.map((n) => {
-            const p = layout.pos.get(n.id)!;
+          {view.shown.map((n) => {
+            const p = view.pos.get(n.id)!;
             const [fill, stroke, chip] = TONES[n.tone][dark ? "dark" : "light"];
             return (
               <g key={n.id}>
-                <rect x={p.x} y={p.y} width={CARD_W} height={CARD_H} rx={9}
+                <rect x={p.x} y={p.y} width={NW} height={NH} rx={9}
                       fill={fill} stroke={stroke} strokeWidth={1.3} />
-                <rect x={p.x} y={p.y} width={4} height={CARD_H} rx={2} fill={chip} />
-                {/* icon chip, echoing the reference layout's leading glyph */}
-                <rect x={p.x + 15} y={p.y + 15} width={16} height={16} rx={4}
+                <rect x={p.x} y={p.y} width={4} height={NH} rx={2} fill={chip} />
+                <rect x={p.x + 15} y={p.y + 14} width={15} height={15} rx={4}
                       fill="none" stroke={chip} strokeWidth={1.3} />
-                <rect x={p.x + 19} y={p.y + 19} width={8} height={3} rx={1.5} fill={chip} />
-                <text x={p.x + 40} y={p.y + 28} fill={ui.text} fontSize={13.5} fontWeight={700}>
-                  {trunc(n.title, 20)}
+                <rect x={p.x + 19} y={p.y + 18} width={7} height={2.6} rx={1.3} fill={chip} />
+                <text x={p.x + 38} y={p.y + 27} fill={ui.text} fontSize={13} fontWeight={700}>
+                  {trunc(n.title, 18)}
                 </text>
-                <text x={p.x + 15} y={p.y + 51} fill={ui.muted} fontSize={10.5}>
-                  {trunc(n.subtitle, 32)}
+                <text x={p.x + 15} y={p.y + 50} fill={ui.muted} fontSize={10}>
+                  {trunc(n.subtitle, 30)}
                 </text>
-                <text x={p.x + 15} y={p.y + 69} fill={ui.faint} fontSize={9.5}>
-                  {trunc(n.detail, 36)}
+                <text x={p.x + 15} y={p.y + 67} fill={ui.faint} fontSize={9}>
+                  {trunc(n.detail, 34)}
                 </text>
               </g>
             );
           })}
 
-          {/* legend */}
           {tonesUsed.map((t, i) => {
-            const x = MARGIN + i * 150;
-            const y = HEAD_H + layout.groupH + 26;
+            const x = PAD + i * 150;
+            const y = HEAD_H + view.groupH + 26;
             const [fill, stroke] = TONES[t][dark ? "dark" : "light"];
             return (
               <g key={t}>
@@ -230,6 +287,12 @@ export default function ArchDiagram({
               </g>
             );
           })}
+          <text x={PAD} y={HEAD_H + view.groupH + 45} fill={ui.faint} fontSize={9}>
+            {trunc([
+              view.hidden > 0 ? `${view.hidden} smaller module(s) not drawn` : "",
+              footnote ?? "",
+            ].filter(Boolean).join(" · "), 120)}
+          </text>
         </svg>
       </div>
     </div>

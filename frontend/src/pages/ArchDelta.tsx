@@ -61,7 +61,10 @@ function toDiagram(d: ArchDelta): { nodes: DiagramNode[]; edges: DiagramEdge[] }
       tone = "changed";
       subtitle = `+${c.files_added} / −${c.files_removed} · ${c.file_count_after} files`;
     }
-    return { id: name, title: name, subtitle, detail: detailOf.get(name) ?? "", tone };
+    return {
+      id: name, title: name, subtitle, detail: detailOf.get(name) ?? "", tone,
+      weight: n ?? 0,
+    };
   });
 
   // Collapse moves into one arrow per module pair — twelve files moving the
@@ -76,11 +79,21 @@ function toDiagram(d: ArchDelta): { nodes: DiagramNode[]; edges: DiagramEdge[] }
     if (hit) hit.n += 1;
     else pairs.set(key, { from, to, n: 1 });
   }
-  const edges: DiagramEdge[] = [...pairs.values()].map((p) => ({
-    from: p.from, to: p.to, label: p.n === 1 ? "1 file" : `${p.n} files`,
+  const moves: DiagramEdge[] = [...pairs.values()].map((p) => ({
+    from: p.from, to: p.to, kind: "move",
+    label: p.n === 1 ? "1 file moved" : `${p.n} files moved`,
   }));
 
-  return { nodes, edges };
+  // Dependency edges give the diagram its direction — without them the modules
+  // are a set, not an architecture. They come from the symbol graph, so they
+  // describe the ingested commit; the page says so when that isn't the head
+  // being compared.
+  const deps: DiagramEdge[] = (d.module_edges ?? []).map((e) => ({
+    from: e.source, to: e.target, weight: e.weight, kind: "dep",
+    label: e.weight >= 20 ? `${e.weight}` : "",
+  }));
+
+  return { nodes, edges: [...deps, ...moves] };
 }
 
 const day = (iso: string) => iso.slice(0, 10);
@@ -225,6 +238,13 @@ export default function ArchDeltaPage() {
                 groupLabel={d.after.package || d.before.package || "package"}
                 nodes={diagram.nodes}
                 edges={diagram.edges}
+                footnote={
+                  diagram.edges.some((e) => e.kind === "dep")
+                    ? (d.edges_live
+                        ? "arrows: module dependencies from the symbol graph"
+                        : "arrows: module dependencies as they are at the ingested commit, not at this ref")
+                    : undefined
+                }
                 filename={`arch-delta-${refLabel(d.base)}-${refLabel(d.head)}`.replace(/[^a-zA-Z0-9._-]+/g, "-")}
               />
             </div>

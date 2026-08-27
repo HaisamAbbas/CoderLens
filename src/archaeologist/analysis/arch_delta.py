@@ -298,6 +298,51 @@ def mermaid_delta(delta: dict, before: dict, after: dict) -> str | None:
     return "\n".join(lines)
 
 
+def module_edges(session, repo_id: int, shape: dict) -> list[dict]:
+    """Module -> module dependencies, aggregated up from the symbol graph.
+
+    Submodules on their own are a bag of folders; what makes an architecture
+    diagram an architecture diagram is the arrows. Those exist already, one
+    level down: SymbolEdge resolves call/inherit edges between symbols, and
+    every symbol has a file, and every file belongs to a submodule.
+
+    Caveat the caller must surface: these edges describe the *ingested* commit,
+    since symbol extraction only ever ran there. They are the architecture's
+    current wiring drawn under whatever the delta says changed — not the wiring
+    as it stood at some historical ref. Rebuilding them for an arbitrary commit
+    would mean re-parsing two whole trees.
+    """
+    from sqlalchemy import select as _select
+
+    from archaeologist.models.entities import Symbol, SymbolEdge
+
+    sub_of: dict[str, str] = {}
+    for s in shape["submodules"]:
+        for path in s["files"]:
+            sub_of[path] = s["submodule"]
+    if not sub_of:
+        return []
+
+    file_of = dict(session.execute(
+        _select(Symbol.id, Symbol.file_path).where(Symbol.repo_id == repo_id)
+    ).all())
+
+    weights: dict[tuple[str, str], int] = {}
+    rows = session.execute(
+        _select(SymbolEdge.src_symbol_id, SymbolEdge.dst_symbol_id)
+        .where(SymbolEdge.repo_id == repo_id, SymbolEdge.dst_symbol_id.is_not(None))
+    ).all()
+    for src_id, dst_id in rows:
+        a = sub_of.get(file_of.get(src_id, ""))
+        b = sub_of.get(file_of.get(dst_id, ""))
+        if a and b and a != b:            # self-edges say nothing at this zoom
+            weights[(a, b)] = weights.get((a, b), 0) + 1
+
+    edges = [{"source": a, "target": b, "weight": w} for (a, b), w in weights.items()]
+    edges.sort(key=lambda e: (-e["weight"], e["source"], e["target"]))
+    return edges
+
+
 def build_delta(repo_path: str | Path, base: str, head: str) -> dict:
     """Full comparison of two refs: both shapes, the receipt, and a diagram."""
     repo = open_repo(repo_path)

@@ -440,10 +440,19 @@ def architecture_delta(
     with session_scope() as s:
         r = _repo(s)
         path = _clone_path(r)
-    try:
-        return arch_delta.build_delta(path, base, head)
-    except RuntimeError as exc:
-        raise HTTPException(422, str(exc)) from exc
+        repo_id, head_sha = r.id, r.head_sha
+        try:
+            result = arch_delta.build_delta(path, base, head)
+        except RuntimeError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        # Arrows come from the symbol graph, which only exists for the ingested
+        # commit — so they are the current wiring, drawn under whatever changed.
+        # `live` says whether the compared head IS that commit, letting the UI
+        # label them honestly instead of implying they were true at that ref.
+        result["module_edges"] = arch_delta.module_edges(s, repo_id, result["after"])
+        result["edges_live"] = bool(head_sha and result["head"]["sha"]
+                                    and head_sha.startswith(result["head"]["sha"]))
+    return result
 
 
 @router.get("/entrypoints")
