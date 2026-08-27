@@ -60,11 +60,22 @@ def list_refs(repo: git.Repo, limit: int = 40) -> dict:
         })
     tags.sort(key=lambda t: t["date"], reverse=True)
 
+    # Sampled across the repo's whole life, not just the newest `limit` commits.
+    # A dense recent window is the wrong list for this feature: any two adjacent
+    # commits are almost always structurally identical, so a picker offering
+    # only the last few days can only produce "nothing changed". Taking every
+    # nth commit spans the full history at the same list length, so the default
+    # pair is far enough apart for structure to have actually moved.
+    all_commits = list(repo.iter_commits())
+    step = max(1, len(all_commits) // limit) if limit else 1
+    sampled = all_commits[::step][:limit]
+    if all_commits and all_commits[-1] not in sampled:
+        sampled.append(all_commits[-1])   # always offer the repo's first commit
     commits = [{
         "ref": c.hexsha, "kind": "commit", "sha": c.hexsha[:12],
         "date": c.committed_datetime.isoformat(),
         "subject": (c.message or "").strip().splitlines()[0][:120],
-    } for c in repo.iter_commits(max_count=limit)]
+    } for c in sampled]
 
     return {"tags": tags, "commits": commits, "head": repo.head.commit.hexsha[:12]}
 

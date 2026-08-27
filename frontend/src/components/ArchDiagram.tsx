@@ -22,6 +22,9 @@ export interface DiagramNode {
   id: string;
   title: string;
   subtitle: string;
+  /** Dot-separated specifics — the actual file names in the module. What makes
+   *  a card worth reading rather than a labelled rectangle. */
+  detail: string;
   tone: Tone;
 }
 export interface DiagramEdge {
@@ -46,8 +49,8 @@ const TONE_LABEL: Record<Tone, string> = {
 
 // Card metrics. Fixed sizes keep the layout deterministic — the same delta must
 // always draw the same diagram, or an export taken twice would differ.
-const CARD_W = 186, CARD_H = 58, GAP_X = 26, GAP_Y = 24;
-const GROUP_PAD = 26, HEAD_H = 74, LEGEND_H = 46, MARGIN = 22;
+const CARD_W = 232, CARD_H = 84, GAP_X = 30, GAP_Y = 28;
+const GROUP_PAD = 30, HEAD_H = 86, LEGEND_H = 52, MARGIN = 26;
 
 const isDarkNow = () =>
   document.documentElement.getAttribute("data-theme") === "dark"
@@ -138,14 +141,14 @@ export default function ArchDiagram({
           <rect x={0} y={0} width={width} height={height} fill={ui.bg} rx={10} />
 
           {/* header */}
-          <text x={MARGIN} y={30} fill={ui.text} fontSize={17} fontWeight={700}>
-            {trunc(title, 58)}
+          <text x={MARGIN} y={36} fill={ui.text} fontSize={21} fontWeight={700}>
+            {trunc(title, 54)}
           </text>
-          <text x={MARGIN} y={50} fill={ui.muted} fontSize={11.5}>
-            {trunc(subtitle, 96)}
+          <text x={MARGIN} y={60} fill={ui.muted} fontSize={12}>
+            {trunc(subtitle, 100)}
           </text>
-          <text x={width - MARGIN} y={30} fill={ui.faint} fontSize={10}
-                textAnchor="end" letterSpacing={1.4}>
+          <text x={width - MARGIN} y={34} fill={ui.faint} fontSize={10}
+                textAnchor="end" letterSpacing={1.6}>
             ARCH DELTA
           </text>
 
@@ -194,14 +197,21 @@ export default function ArchDiagram({
             const [fill, stroke, chip] = TONES[n.tone][dark ? "dark" : "light"];
             return (
               <g key={n.id}>
-                <rect x={p.x} y={p.y} width={CARD_W} height={CARD_H} rx={8}
-                      fill={fill} stroke={stroke} strokeWidth={1.2} />
+                <rect x={p.x} y={p.y} width={CARD_W} height={CARD_H} rx={9}
+                      fill={fill} stroke={stroke} strokeWidth={1.3} />
                 <rect x={p.x} y={p.y} width={4} height={CARD_H} rx={2} fill={chip} />
-                <text x={p.x + 16} y={p.y + 24} fill={ui.text} fontSize={12.5} fontWeight={700}>
+                {/* icon chip, echoing the reference layout's leading glyph */}
+                <rect x={p.x + 15} y={p.y + 15} width={16} height={16} rx={4}
+                      fill="none" stroke={chip} strokeWidth={1.3} />
+                <rect x={p.x + 19} y={p.y + 19} width={8} height={3} rx={1.5} fill={chip} />
+                <text x={p.x + 40} y={p.y + 28} fill={ui.text} fontSize={13.5} fontWeight={700}>
                   {trunc(n.title, 20)}
                 </text>
-                <text x={p.x + 16} y={p.y + 42} fill={ui.muted} fontSize={10}>
-                  {trunc(n.subtitle, 26)}
+                <text x={p.x + 15} y={p.y + 51} fill={ui.muted} fontSize={10.5}>
+                  {trunc(n.subtitle, 32)}
+                </text>
+                <text x={p.x + 15} y={p.y + 69} fill={ui.faint} fontSize={9.5}>
+                  {trunc(n.detail, 36)}
                 </text>
               </g>
             );
