@@ -136,22 +136,25 @@ def _file(content: str, path: str = "src/app.py") -> File:
 
 def test_scan_file_offline_returns_empty(monkeypatch):
     monkeypatch.setattr(weaknesses, "llm_available", lambda: False)
-    assert weaknesses._scan_file(_file("x = 1\n")) == ([], 0)
+    # Offline is a deliberate no-op, not a failure — _cap_notes discloses it.
+    assert weaknesses._scan_file(_file("x = 1\n")) == ([], 0, None)
 
 
 def test_scan_file_parses_and_attaches_file_path(monkeypatch):
     monkeypatch.setattr(weaknesses, "llm_available", lambda: True)
     monkeypatch.setattr(weaknesses, "call_llm", lambda *a, **kw: '{"findings": [' + repr({
         **VALID, "start_line": 1, "end_line": 1}).replace("'", '"') + ']}')
-    found, dropped = weaknesses._scan_file(_file("line1\nline2\n"))
-    assert len(found) == 1 and dropped == 0
+    found, dropped, failure = weaknesses._scan_file(_file("line1\nline2\n"))
+    assert len(found) == 1 and dropped == 0 and failure is None
     assert found[0]["file_path"] == "src/app.py"
 
 
 def test_scan_file_survives_garbage_llm_output(monkeypatch):
     monkeypatch.setattr(weaknesses, "llm_available", lambda: True)
     monkeypatch.setattr(weaknesses, "call_llm", lambda *a, **kw: "total nonsense")
-    assert weaknesses._scan_file(_file("x = 1\n")) == ([], 0)
+    found, dropped, failure = weaknesses._scan_file(_file("x = 1\n"))
+    # Unusable output is a failure to disclose, never a silent all-clear.
+    assert (found, dropped) == ([], 0) and failure
 
 
 def test_scan_file_long_content_flags_truncation_out_of_band(monkeypatch):
@@ -164,7 +167,7 @@ def test_scan_file_long_content_flags_truncation_out_of_band(monkeypatch):
     monkeypatch.setattr(weaknesses, "llm_available", lambda: True)
     monkeypatch.setattr(weaknesses, "call_llm", fake_call)
     big = _file("//" + "x" * 20000 + "\n")
-    assert weaknesses._scan_file(big) == ([], 0)
+    assert weaknesses._scan_file(big) == ([], 0, None)
     # The truncation is disclosed OUT of band and forbidden as a finding — the
     # old "# … (truncated)" marker inside the code was quoted back as a "bug".
     assert "# … (truncated)" not in captured["user"]
@@ -187,7 +190,7 @@ def test_scan_file_drops_truncation_artifacts_only_when_truncated(monkeypatch):
     # A realistic many-line file (so the boundary window is a small tail, not
     # the whole file) that exceeds MAX_FILE_CHARS → truncated.
     big = _file("row = 1\n" * 6000)   # 48000 chars, 6000 lines
-    found, dropped = weaknesses._scan_file(big)
+    found, dropped, _ = weaknesses._scan_file(big)
     assert dropped == 1
     assert [f["title"] for f in found] == ["Off-by-one"]
 
@@ -221,7 +224,7 @@ def test_scan_files_fans_out_reports_progress_and_sorts(llm_on, monkeypatch):
     def fake_scan(f: File):
         titles = {"b.py": "B finding", "a.py": "A finding"}
         return ([{"file_path": f.path, "start_line": 1, "title": titles[f.path],
-                  "category": "style", "severity": "low"}], 0)
+                  "category": "style", "severity": "low"}], 0, None)
 
     monkeypatch.setattr(weaknesses, "_scan_file", fake_scan)
     files = [_file("x\n", "b.py"), _file("y\n", "a.py")]
@@ -231,6 +234,39 @@ def test_scan_files_fans_out_reports_progress_and_sorts(llm_on, monkeypatch):
     # Wiki-style stable ordering regardless of completion order.
     assert [f["file_path"] for f in findings] == ["a.py", "b.py"]
     assert progress[-1] == (2, 2)
+    assert not any("could not be scanned" in n or "Nothing was scanned" in n for n in notes)
+
+
+def test_scan_files_discloses_a_provider_that_failed_on_every_file(llm_on, monkeypatch):
+    # An exhausted free quota answers HTTP 200 with a plain-text apology, so every
+    # file "succeeds" into unusable output. Zero findings must not read as clean.
+    monkeypatch.setattr(weaknesses, "_scan_file",
+                        lambda f: ([], 0, "response contained no 'findings' list"))
+    findings, notes = weaknesses.scan_files(
+        [_file("x\n", "a.py"), _file("y\n", "b.py")], 2, True)
+    assert findings == []
+    note = next(n for n in notes if "Nothing was scanned" in n)
+    assert "all 2 file(s) failed" in note
+    assert "no working provider, not a clean codebase" in note
+    assert "response contained no 'findings' list" in note
+
+
+def test_scan_files_discloses_partial_provider_failure(llm_on, monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(f: File):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [], 0, "503 upstream unavailable"
+        return ([{"file_path": f.path, "start_line": 1, "title": "T",
+                  "category": "style", "severity": "low"}], 0, None)
+
+    monkeypatch.setattr(weaknesses, "_scan_file", flaky)
+    findings, notes = weaknesses.scan_files(
+        [_file("x\n", "a.py"), _file("y\n", "b.py")], 2, True)
+    assert len(findings) == 1
+    note = next(n for n in notes if "could not be scanned" in n)
+    assert "1 of 2 file(s)" in note and "503 upstream unavailable" in note
 
 
 # ---------- ADF description + create_issue request building ----------

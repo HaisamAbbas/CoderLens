@@ -172,11 +172,19 @@ def _is_truncation_artifact(finding: dict, sent_lines: int) -> bool:
     return finding["start_line"] >= sent_lines - 5
 
 
-def _scan_file(file: File) -> tuple[list[dict], int]:
-    """Returns (kept findings, number dropped as truncation artifacts) so the
-    caller can disclose the drop count rather than silently swallow it."""
+def _scan_file(file: File) -> tuple[list[dict], int, str | None]:
+    """Returns (kept findings, number dropped as truncation artifacts, failure)
+    so the caller can disclose both rather than silently swallow them.
+
+    `failure` is a short reason when the file could not be scanned at all — the
+    provider raised, or answered with something that wasn't the JSON the prompt
+    asked for. Keeping that distinct from an honest empty result is the whole
+    point: an exhausted free quota replies HTTP 200 with a plain-text apology
+    rather than an error status, and treating that as "no bugs here" reports a
+    confident all-clear on a scan where nothing was ever actually examined.
+    """
     if not llm_available() or not file.content:
-        return [], 0
+        return [], 0, None
     truncated = len(file.content) > MAX_FILE_CHARS
     body = file.content[:MAX_FILE_CHARS]
     # No cosmetic "# … (truncated)" marker inside the code — the model used to
@@ -193,11 +201,11 @@ def _scan_file(file: File) -> tuple[list[dict], int]:
         raw = call_llm(WEAKNESS_SYS, user, max_tokens=1500, temperature=0.1,
                        label="weakness-scan")
         data = parse_llm_json(raw)
-    except Exception:  # noqa: BLE001 - one file's failure never sinks the scan
-        return [], 0
+    except Exception as exc:  # noqa: BLE001 - one file's failure never sinks the scan
+        return [], 0, str(exc).strip()[:200] or exc.__class__.__name__
     items = data.get("findings")
     if not isinstance(items, list):
-        return [], 0
+        return [], 0, "response contained no 'findings' list"
     max_line = file.content.count("\n") + 1
     sent_lines = body.count("\n") + 1
     out: list[dict] = []
@@ -210,7 +218,7 @@ def _scan_file(file: File) -> tuple[list[dict], int]:
             dropped += 1
             continue
         out.append(finding)
-    return out, dropped
+    return out, dropped, None
 
 
 def _cap_notes(files: list[File], total_code: int, scan_all: bool) -> list[str]:
@@ -243,19 +251,38 @@ def scan_files(files: list[File], total_code: int, scan_all: bool,
     findings: list[dict] = []
     done = 0
     dropped_artifacts = 0
+    failed = 0
+    first_failure = ""
     with ThreadPoolExecutor(max_workers=6) as pool:
         futures = [pool.submit(_scan_file, f) for f in files]
         for future in as_completed(futures):
             try:
-                file_findings, dropped = future.result()
+                file_findings, dropped, failure = future.result()
                 findings.extend(file_findings)
                 dropped_artifacts += dropped
-            except Exception:  # noqa: BLE001 - defensive; _scan_file already guards
-                pass
+            except Exception as exc:  # noqa: BLE001 - defensive; _scan_file already guards
+                failure = str(exc).strip()[:200] or exc.__class__.__name__
+            if failure:
+                failed += 1
+                first_failure = first_failure or failure
             done += 1
             if on_progress is not None:
                 on_progress(done, len(files))
 
+    # An empty result means two very different things, and the page cannot tell
+    # them apart on its own: a clean codebase, or a provider that never answered.
+    # Say which one this was.
+    if failed and failed == len(files):
+        notes.append(
+            f"Nothing was scanned: all {failed} file(s) failed — the LLM provider "
+            f"errored or returned unusable output, so an empty result here means "
+            f"no working provider, not a clean codebase. First reason: {first_failure}"
+        )
+    elif failed:
+        notes.append(
+            f"{failed} of {len(files)} file(s) could not be scanned — the LLM "
+            f"provider errored or returned unusable output. First reason: {first_failure}"
+        )
     if dropped_artifacts:
         notes.append(
             f"Discarded {dropped_artifacts} finding(s) that were artifacts of "
