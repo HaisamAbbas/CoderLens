@@ -1,4 +1,5 @@
 import type {
+  ArchDelta, ArchRefs,
   Architecture, AskResult, Codemap, CodemapEdge, CodemapNode, Communities, ConfluenceJob,
   ConversationDetail, ConversationKind, ConversationSummary, Coupling, DeadCode, Entrypoint,
   FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, InvestigateResult,
@@ -52,6 +53,9 @@ export const api = {
   refreshRepo: (token = "") => post<{ job_id: string; repo_url: string; status: string }>("/api/repos/refresh", { token }),
   overview: () => get<Overview>("/api/overview"),
   architecture: () => get<Architecture>("/api/architecture"),
+  architectureRefs: () => get<ArchRefs>("/api/architecture/refs"),
+  architectureDelta: (base: string, head: string) =>
+    get<ArchDelta>(`/api/architecture/delta?base=${q(base)}&head=${q(head)}`),
   tree: () => get<{ files: TreeFile[] }>("/api/tree"),
   file: (path: string) => get<FileContent>(`/api/file?path=${q(path)}`),
   symbol: (id: number) => get<SymbolDetail>(`/api/symbol/${id}`),
