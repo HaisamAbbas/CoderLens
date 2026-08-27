@@ -9,6 +9,7 @@ and the ask/investigate endpoints (including streaming investigate).
 import json
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query
@@ -385,6 +386,51 @@ def architecture() -> dict:
     with session_scope() as s:
         r = _repo(s)
         return build_architecture(s, r.id, r.name)
+
+
+def _clone_path(repo: Repo) -> Path:
+    """Where this repo's clone lives on disk — the same owner__name layout
+    clone_or_open writes to, so history is read from the clone the ingest made
+    rather than a second copy."""
+    from archaeologist.ingestion.repository import repo_slug
+
+    owner, name = repo_slug(repo.url)
+    return Path(settings.repos_dir) / f"{owner}__{name}"
+
+
+@router.get("/architecture/refs")
+def architecture_refs() -> dict:
+    """Tags and recent commits of the active repo, for the delta ref picker."""
+    from archaeologist.analysis import arch_delta
+
+    with session_scope() as s:
+        r = _repo(s)
+        path = _clone_path(r)
+    try:
+        return arch_delta.list_refs(arch_delta.open_repo(path))
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/architecture/delta")
+def architecture_delta(
+    base: str = Query(..., description="Ref to compare from — a tag, branch or SHA"),
+    head: str = Query(..., description="Ref to compare to"),
+) -> dict:
+    """Structural difference between the architecture at two refs.
+
+    Reads two git trees and diffs their shapes; no re-ingest, no LLM, and no
+    write to the database, so it is safe to call repeatedly while exploring.
+    """
+    from archaeologist.analysis import arch_delta
+
+    with session_scope() as s:
+        r = _repo(s)
+        path = _clone_path(r)
+    try:
+        return arch_delta.build_delta(path, base, head)
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/entrypoints")
