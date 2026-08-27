@@ -107,6 +107,25 @@
   font-weight: 600; margin-bottom: 14px;
 }
 .wk-diagram-canvas { overflow-x: auto; }
+/* Wraps the diagram so its export controls can sit in a corner without being
+   part of the SVG — what you download is exactly what's drawn, no toolbar. */
+.wk-mermaid-wrap { position: relative; }
+.wk-mermaid-wrap:hover .dgx, .dgx:focus-within { opacity: 1; }
+.dgx {
+  position: absolute; top: 6px; right: 6px; z-index: 1; display: flex; gap: 4px; align-items: center;
+  opacity: 0; transition: opacity 0.12s;
+}
+.dgx button {
+  height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text-2); cursor: pointer;
+  font-size: 11px; font-weight: 500; letter-spacing: 0.02em; line-height: 1;
+}
+.dgx button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.dgx button:disabled { opacity: 0.5; cursor: default; }
+.dgx-err { font-size: 11px; color: var(--danger, #dc2626); }
+/* Inside the lightbox the controls are always visible and sit on its own bar. */
+.dgx-inv { position: static; opacity: 1; }
+
 .wk-mermaid { display: flex; justify-content: center; cursor: zoom-in; position: relative; border-radius: var(--r); transition: background 0.12s; }
 .wk-mermaid:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .wk-mermaid svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }

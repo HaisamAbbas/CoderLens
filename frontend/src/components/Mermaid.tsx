@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
+import { downloadPng, downloadShareCard, downloadSvg } from "../lib/diagramExport";
 
 const isDarkNow = () =>
   document.documentElement.getAttribute("data-theme") === "dark"
@@ -13,7 +14,14 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
  *  still fall back to showing the source text if a render ever throws, so a
  *  diagram can never blank the page. Click to open a full-screen viewer that
  *  zooms and pans. Theme follows the app's light/dark. */
-export default function Mermaid({ chart }: { chart: string }) {
+export default function Mermaid({
+  chart, title = "diagram", subtitle = "",
+}: {
+  chart: string;
+  /** Names the downloaded file and titles the share card. */
+  title?: string;
+  subtitle?: string;
+}) {
   const rawId = useId().replace(/[^a-zA-Z0-9]/g, "");
   const [svg, setSvg] = useState("");
   const [failed, setFailed] = useState(false);
@@ -38,22 +46,79 @@ export default function Mermaid({ chart }: { chart: string }) {
   if (failed) return <pre className="wk-mermaid-src">{chart}</pre>;
   return (
     <>
-      <div
-        className="wk-mermaid"
-        role="button"
-        title="Click to expand"
-        onClick={() => svg && setOpen(true)}
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
-      {open && <DiagramLightbox svg={svg} onClose={() => setOpen(false)} />}
+      <div className="wk-mermaid-wrap">
+        <div
+          className="wk-mermaid"
+          role="button"
+          title="Click to expand"
+          onClick={() => svg && setOpen(true)}
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+        {svg && <DiagramExport chart={chart} title={title} subtitle={subtitle} />}
+      </div>
+      {open && (
+        <DiagramLightbox
+          svg={svg} chart={chart} title={title} subtitle={subtitle}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </>
+  );
+}
+
+/** Download controls. Kept out of the SVG itself so the diagram exported is
+ *  exactly the diagram shown, with no toolbar baked into it. */
+function DiagramExport({
+  chart, title, subtitle, inverse = false,
+}: {
+  chart: string; title: string; subtitle: string; inverse?: boolean;
+}) {
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "diagram";
+
+  const run = (kind: string, fn: () => Promise<void>) => async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(kind);
+    setError("");
+    try {
+      await fn();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className={"dgx" + (inverse ? " dgx-inv" : "")} onClick={(e) => e.stopPropagation()}>
+      <button disabled={!!busy} onClick={run("svg", () => downloadSvg(chart, slug))}
+              title="Download as SVG (vector, scales cleanly)">
+        {busy === "svg" ? "…" : "SVG"}
+      </button>
+      <button disabled={!!busy} onClick={run("png", () => downloadPng(chart, slug))}
+              title="Download as PNG (2x resolution)">
+        {busy === "png" ? "…" : "PNG"}
+      </button>
+      <button disabled={!!busy}
+              onClick={run("card", () => downloadShareCard(chart, slug, title, subtitle))}
+              title="Download a 1200x630 share card for a PR or doc">
+        {busy === "card" ? "…" : "Card"}
+      </button>
+      {error && <span className="dgx-err" title={error}>export failed</span>}
+    </div>
   );
 }
 
 /** Full-screen diagram viewer: wheel to zoom (toward the cursor), drag to pan,
  *  buttons for zoom/reset, Esc or backdrop click to close. The SVG is scaled
  *  with a CSS transform, so it stays crisp at any zoom. */
-function DiagramLightbox({ svg, onClose }: { svg: string; onClose: () => void }) {
+function DiagramLightbox({
+  svg, chart, title, subtitle, onClose,
+}: {
+  svg: string; chart: string; title: string; subtitle: string; onClose: () => void;
+}) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [t, setT] = useState({ x: 0, y: 0, s: 1 });
@@ -116,6 +181,7 @@ function DiagramLightbox({ svg, onClose }: { svg: string; onClose: () => void })
         <button onClick={() => btnZoom(0.8)} title="Zoom out">−</button>
         <button onClick={fit} title="Fit to screen">Fit</button>
         <span className="dlg-pct">{Math.round(t.s * 100)}%</span>
+        <DiagramExport chart={chart} title={title} subtitle={subtitle} inverse />
         <button className="dlg-close" onClick={onClose} title="Close (Esc)">✕</button>
       </div>
       <div
