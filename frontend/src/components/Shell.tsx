@@ -132,6 +132,7 @@ export default function Shell() {
               <NavLink to="/dead-code"><GhostIcon /> Dead code</NavLink>
               <NavLink to="/weaknesses"><FlameIcon /> Bug Hunter</NavLink>
               <NavLink to="/communities"><ClusterIcon /> Communities</NavLink>
+              <NavLink to="/arch-delta"><CompassIcon /> Arch delta</NavLink>
             </>
           )}
         </nav>

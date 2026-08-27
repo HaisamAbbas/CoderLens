@@ -14,6 +14,7 @@ import Search from "./pages/Search";
 import NotFound from "./pages/NotFound";
 import DeadCode from "./pages/DeadCode";
 import Communities from "./pages/Communities";
+import ArchDelta from "./pages/ArchDelta";
 import Weaknesses from "./pages/Weaknesses";
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/dead-code" element={<DeadCode />} />
         <Route path="/weaknesses" element={<Weaknesses />} />
         <Route path="/communities" element={<Communities />} />
+        <Route path="/arch-delta" element={<ArchDelta />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

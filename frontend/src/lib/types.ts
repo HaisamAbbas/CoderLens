@@ -24,6 +24,38 @@ export interface RepoJob {
   step: string; message: string; stats: Record<string, number> | null; error: string;
 }
 
+export interface ArchRef { ref: string; kind: "tag" | "commit"; sha: string; date: string; subject: string; }
+export interface ArchRefs { tags: ArchRef[]; commits: ArchRef[]; head: string; }
+export interface ArchMove {
+  file: string; from: string; to: string; from_submodule: string; to_submodule: string;
+}
+export interface ArchSubChange {
+  submodule: string; files_added: number; files_removed: number;
+  file_count_before: number; file_count_after: number;
+}
+export interface ArchCounts { code_files: number; submodules: number }
+/** Facts read off two git trees — never an inference about whether a change was
+ *  good, risky or intentional. See analysis/arch_delta.py. */
+export interface ArchDelta {
+  base: { ref: string; sha: string; date: string; subject: string };
+  head: { ref: string; sha: string; date: string; subject: string };
+  before: { package: string }; after: { package: string };
+  mermaid: string | null;
+  delta: {
+    package: { before: string; after: string } | null;
+    package_relocated: boolean;
+    submodules_added: string[]; submodules_removed: string[];
+    submodules_changed: ArchSubChange[];
+    files_added: string[]; files_removed: string[]; files_moved: ArchMove[];
+    top_level_added: string[]; top_level_removed: string[];
+    counts: {
+      before: ArchCounts; after: ArchCounts;
+      files_added: number; files_removed: number; files_moved: number;
+    };
+    truncated: boolean; unchanged: boolean;
+  };
+}
+
 export interface ReadingItem { path: string; degree: number; reason: string; }
 export interface Hotspot { path: string; score: number; churn: number; coupling: number; }
 export interface Overview {
