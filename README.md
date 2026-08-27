@@ -66,8 +66,15 @@ active, and the sidebar shows it.
 cp .env.example .env        # add your ANTHROPIC_API_KEY
 uv sync --extra dev         # create venv + install deps (incl. ipykernel)
 docker compose up -d        # Postgres + OpenSearch + Redis
-uv run uvicorn archaeologist.main:app --reload
+uv run uvicorn archaeologist.main:app --reload --reload-dir src
 ```
+
+`--reload-dir src` is not optional. Uvicorn's reloader defaults to watching the
+whole working directory for `*.py` changes, and an ingest clones its target repo
+into `repos/` — right inside that tree. Cloning any Python repo therefore trips
+the reloader, and the restart kills the ingest thread mid-pipeline, leaving a
+repo that's indexed only as far as it got (symbols but no graph, say). Watch
+`src/` only and a clone can't restart the server.
 
 **Validate the stack:** open [notebooks/00_phase0_infrastructure.ipynb](notebooks/00_phase0_infrastructure.ipynb)
 in VS Code, select the `.venv` kernel, and **Run All**. It checks Postgres, OpenSearch, Redis,

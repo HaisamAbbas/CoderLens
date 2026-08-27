@@ -2,7 +2,12 @@
 
 Run (after `docker compose up -d` and `uv sync`):
 
-    uv run uvicorn archaeologist.main:app --reload
+    uv run uvicorn archaeologist.main:app --reload --reload-dir src
+
+Keep `--reload-dir src`: uvicorn's reloader otherwise watches the whole working
+directory for `*.py` changes, and an ingest clones its target repo into `repos/`
+inside that tree — so cloning a Python repo restarts the server and kills the
+ingest thread partway through the pipeline.
 
 The React frontend (frontend/) talks to the JSON API under /api. In dev it runs
 on Vite (:5173) and proxies to this server; in prod its built bundle (frontend/dist)
