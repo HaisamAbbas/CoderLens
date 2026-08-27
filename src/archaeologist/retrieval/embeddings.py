@@ -28,6 +28,31 @@ from archaeologist.config import settings
 EMBED_BATCH = 32
 MAX_RETRIES = 8
 
+# Stand-in for a text with nothing in it. OpenAI-compatible /embeddings
+# endpoints reject an empty string outright — OpenRouter answers 400
+# "expected string to have >=1 characters" — and because the request carries a
+# whole batch, one blank text fails all 32 of them. That aborted an entire
+# ingest at the code-index step over a single symbol with no extractable body.
+# Substituting keeps every response aligned one-to-one with its input list.
+_BLANK_INPUT = "(empty)"
+
+
+def _safe_inputs(texts: list[str]) -> list[str]:
+    return [t if t.strip() else _BLANK_INPUT for t in texts]
+
+
+def _check(resp: httpx.Response, provider: str) -> None:
+    """Raise with the provider's actual complaint attached.
+
+    httpx's raise_for_status() reports only the status line and the URL, so
+    what the provider actually objected to — unknown model id, quota gone,
+    malformed input — never made it into the job's error field, leaving a bare
+    "400 Bad Request" with nothing to act on.
+    """
+    if resp.is_success:
+        return
+    raise RuntimeError(f"{provider} embeddings: HTTP {resp.status_code} — {resp.text[:500]}")
+
 
 class LocalEmbedder:
     """fastembed ONNX model — downloaded once, then fully local."""
@@ -116,19 +141,22 @@ class AlibabaEmbedder:
         n = len(texts)
         with httpx.Client(timeout=30.0) as client:
             for start in range(0, n, self._MAX_PER_CALL):
-                chunk = texts[start : start + self._MAX_PER_CALL]
+                chunk = _safe_inputs(texts[start : start + self._MAX_PER_CALL])
                 payload = {"model": self.model, "input": chunk, "dimensions": self.dim}
                 for attempt in range(MAX_RETRIES):
                     resp = client.post(self._url, json=payload, headers=self._headers)
                     if resp.status_code == 429:
                         time.sleep(min(60, 5 * (attempt + 1)))
                         continue
-                    resp.raise_for_status()
+                    _check(resp, "Alibaba")
                     data = sorted(resp.json()["data"], key=lambda d: d["index"])
                     out.extend(d["embedding"] for d in data)
                     break
                 else:
-                    raise RuntimeError(f"Alibaba embeddings: exhausted retries at batch {start}")
+                    raise RuntimeError(
+                        f"Alibaba embeddings: still rate-limited after {MAX_RETRIES} retries "
+                        f"at batch {start} — {resp.text[:300]}"
+                    )
                 if progress:
                     print(f"      embedded {min(start + self._MAX_PER_CALL, n)}/{n}", flush=True)
         return out
@@ -161,19 +189,22 @@ class AihubmixEmbedder:
         n = len(texts)
         with httpx.Client(timeout=30.0) as client:
             for start in range(0, n, EMBED_BATCH):
-                chunk = texts[start : start + EMBED_BATCH]
+                chunk = _safe_inputs(texts[start : start + EMBED_BATCH])
                 payload = {"model": self.model, "input": chunk}
                 for attempt in range(MAX_RETRIES):
                     resp = client.post(self._url, json=payload, headers=self._headers)
                     if resp.status_code == 429:
                         time.sleep(min(60, 5 * (attempt + 1)))
                         continue
-                    resp.raise_for_status()
+                    _check(resp, "AIHubMix")
                     data = sorted(resp.json()["data"], key=lambda d: d["index"])
                     out.extend(d["embedding"] for d in data)
                     break
                 else:
-                    raise RuntimeError(f"AIHubMix embeddings: exhausted retries at batch {start}")
+                    raise RuntimeError(
+                        f"AIHubMix embeddings: still rate-limited after {MAX_RETRIES} retries "
+                        f"at batch {start} — {resp.text[:300]}"
+                    )
                 if progress:
                     print(f"      embedded {min(start + EMBED_BATCH, n)}/{n}", flush=True)
         return out
@@ -210,19 +241,25 @@ class OpenRouterEmbedder:
         n = len(texts)
         with httpx.Client(timeout=30.0) as client:
             for start in range(0, n, EMBED_BATCH):
-                chunk = [t[: self._MAX_CHARS] for t in texts[start : start + EMBED_BATCH]]
+                batch = texts[start : start + EMBED_BATCH]
+                chunk = _safe_inputs([t[: self._MAX_CHARS] for t in batch])
                 payload = {"model": self.model, "input": chunk}
                 for attempt in range(MAX_RETRIES):
                     resp = client.post(self._url, json=payload, headers=self._headers)
                     if resp.status_code == 429:
                         time.sleep(min(60, 5 * (attempt + 1)))
                         continue
-                    resp.raise_for_status()
+                    _check(resp, "OpenRouter")
                     data = sorted(resp.json()["data"], key=lambda d: d["index"])
                     out.extend(d["embedding"] for d in data)
                     break
                 else:
-                    raise RuntimeError(f"OpenRouter embeddings: exhausted retries at batch {start}")
+                    # Worth reading in full: the free tier's cap is per *day*, so
+                    # this is not something the retry loop can ever wait out.
+                    raise RuntimeError(
+                        f"OpenRouter embeddings: still rate-limited after {MAX_RETRIES} retries "
+                        f"at batch {start} — {resp.text[:300]}"
+                    )
                 if progress:
                     print(f"      embedded {min(start + EMBED_BATCH, n)}/{n}", flush=True)
         return out
