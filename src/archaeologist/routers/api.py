@@ -47,9 +47,21 @@ from archaeologist.viz.export import export_file_graph, export_symbol_graph
 router = APIRouter(prefix="/api", tags=["api"])
 
 
+def _active_order():
+    """Ordering that puts the active repo first: most recently ingested.
+
+    Not by id. Re-ingesting an existing repo updates its row in place rather
+    than inserting a new one, so a repo added long ago and refreshed a minute
+    ago keeps its low id — ordering by id then silently hands every page a
+    different repo than the one just ingested. `ingested_at` is null while a
+    first ingest is still running, so nulls sort last and id breaks ties.
+    """
+    return (Repo.ingested_at.desc().nullslast(), Repo.id.desc())
+
+
 def _repo(session) -> Repo:
     """The active repo — the most recently ingested one."""
-    repo = session.scalar(select(Repo).order_by(Repo.id.desc()))
+    repo = session.scalar(select(Repo).order_by(*_active_order()))
     if repo is None:
         raise HTTPException(404, "No repository ingested yet.")
     return repo
@@ -135,9 +147,10 @@ def _repo_row(s, r: Repo) -> dict:
 
 @router.get("/repos")
 def repos() -> dict:
-    """Every ingested repo, newest first. The first entry is the active one."""
+    """Every ingested repo, newest first. The first entry is the active one —
+    same ordering as _repo(), so the list and the active repo never disagree."""
     with session_scope() as s:
-        rows = s.scalars(select(Repo).order_by(Repo.id.desc())).all()
+        rows = s.scalars(select(Repo).order_by(*_active_order())).all()
         return {"repos": [_repo_row(s, r) for r in rows]}
 
 
