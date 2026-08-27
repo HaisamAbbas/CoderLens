@@ -34,12 +34,20 @@ export interface ArchSubChange {
   file_count_before: number; file_count_after: number;
 }
 export interface ArchCounts { code_files: number; submodules: number }
+export interface ArchSubmodule { submodule: string; files: string[]; weight: number }
+/** The mechanical skeleton at one ref — see analysis/architecture.py's
+ *  shape_from_paths, which both the live and historical views go through. */
+export interface ArchShape {
+  package: string;
+  submodules: ArchSubmodule[];
+  counts: ArchCounts;
+}
 /** Facts read off two git trees — never an inference about whether a change was
  *  good, risky or intentional. See analysis/arch_delta.py. */
 export interface ArchDelta {
   base: { ref: string; sha: string; date: string; subject: string };
   head: { ref: string; sha: string; date: string; subject: string };
-  before: { package: string }; after: { package: string };
+  before: ArchShape; after: ArchShape;
   mermaid: string | null;
   delta: {
     package: { before: string; after: string } | null;
