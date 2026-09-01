@@ -336,6 +336,36 @@ def _mermaid_flow(flow: dict) -> str | None:
     return _mm_graph(nodes, edges, direction="TD", subgraphs=False)
 
 
+def _mermaid_sequence(flow: dict) -> str | None:
+    """The same call flow as _mermaid_flow, but as a sequenceDiagram —
+    'what happens when this runs' reads as execution ORDER, which a
+    sequence diagram communicates more naturally than a generic box graph.
+    Falls back to _mermaid_flow (its caller tries this first) once the
+    chain gets too busy to read as a left-to-right sequence."""
+    by_id = {n["id"]: n for n in flow["nodes"]}
+    edges = [e for e in flow["edges"] if e["source"] in by_id and e["target"] in by_id]
+    if not edges:
+        return None
+    # Participants in first-appearance order (not alphabetical) — a sequence
+    # diagram's column order should mirror how names are actually reached.
+    order: list[int] = []
+    seen: set[int] = set()
+    for e in edges:
+        for nid in (e["source"], e["target"]):
+            if nid not in seen:
+                seen.add(nid)
+                order.append(nid)
+    if len(order) > 12:  # busy past this point — a flowchart degrades better than a wall of lifelines
+        return None
+    lines = ["sequenceDiagram"]
+    for nid in order:
+        lines.append(f'  participant p{nid} as {_mm_txt(by_id[nid]["qualified_name"], 24)}')
+    for e in edges:
+        call = _mm_txt(_leaf(by_id[e["target"]]["qualified_name"]), 20)
+        lines.append(f"  p{e['source']}->>p{e['target']}: {call}()")
+    return "\n".join(lines)
+
+
 def _mermaid_community(session: Session, repo_id: int, cluster: dict) -> str | None:
     """A subsystem's internal call graph, with directory subgraph boxes so the
     module boundaries inside the cluster are visible."""
@@ -350,6 +380,49 @@ def _mermaid_community(session: Session, repo_id: int, cluster: dict) -> str | N
     nodes = [{"id": f"c{m['id']}", "label": _leaf(m["qualified_name"]), "group": _dir_of(m["path"])}
              for m in members]
     return _mm_graph(nodes, edges, direction="TD", subgraphs=True)
+
+
+def _mermaid_class_diagram(session: Session, repo_id: int, symbol_ids: list[int],
+                           syms: dict[int, Symbol]) -> str | None:
+    """A real inheritance hierarchy among a set of symbols — Mermaid's
+    classDiagram, genuinely different visual language suited to "is-a"
+    structure instead of the flowchart boxes every other diagram uses here.
+    Built from real `inherit` edges in the dependency graph; returns None
+    (no diagram, not a wrong one) when the given symbols have none."""
+    rows = session.execute(
+        select(SymbolEdge.src_symbol_id, SymbolEdge.dst_symbol_id)
+        .where(SymbolEdge.repo_id == repo_id, SymbolEdge.edge_type == "inherit",
+               SymbolEdge.src_symbol_id.in_(symbol_ids), SymbolEdge.dst_symbol_id.in_(symbol_ids))
+    ).all()
+    lines = ["classDiagram"]
+    seen: set[tuple[int, int]] = set()
+    for src, dst in rows:
+        if src == dst or (src, dst) in seen or src not in syms or dst not in syms:
+            continue
+        seen.add((src, dst))
+        lines.append(f"  {syms[dst].name} <|-- {syms[src].name}")
+    return "\n".join(lines) if len(lines) > 1 else None
+
+
+def _mermaid_er(models: list[tuple[Symbol, str]]) -> str | None:
+    """An ER-style diagram from real detected model classes, connected where
+    one model's source mentions another's class name (the same signal the
+    Data Model page's "Mentions" table column already uses — see
+    _focus_data_model for why that's an honest textual-co-occurrence proxy,
+    not a parsed foreign key). Genuinely different visual language (Mermaid's
+    erDiagram) suited to schema-shaped data. No field-level detail, since
+    that isn't actually parsed out of the source."""
+    model_names = {s.name for s, _ in models}
+    edges: set[tuple[str, str]] = set()
+    for s, _base in models:
+        for n in _model_mentions(s, model_names):
+            edges.add(tuple(sorted((s.name, n))))
+    if not edges:
+        return None
+    lines = ["erDiagram"]
+    for a, b in sorted(edges):
+        lines.append(f'  {a} ||--o{{ {b} : "references"')
+    return "\n".join(lines)
 
 
 # ---------- per-focus section builders ----------
@@ -440,7 +513,8 @@ def _focus_getting_started(session: Session, repo_id: int, entrypoints: list[dic
     return sections, summary
 
 
-def _focus_core_engine(files_by_path: dict[str, File], start_sym: Symbol | None, start_why: str,
+def _focus_core_engine(session: Session, repo_id: int, files_by_path: dict[str, File],
+                       start_sym: Symbol | None, start_why: str,
                        core_models: list[Symbol], fan_in: dict[int, float]):
     if not start_sym:
         return None, None
@@ -457,9 +531,15 @@ def _focus_core_engine(files_by_path: dict[str, File], start_sym: Symbol | None,
                     + "; ".join(f"{s.qualified_name}, used in {round(fan_in.get(s.id, 0))} places"
                                 + (f" — {_first_sentence(s.docstring)}" if s.docstring else "")
                                 for s in core_models))
+        # Only a real, detected inheritance hierarchy among exactly these
+        # featured symbols — no diagram added when there isn't one, same
+        # discipline as every other diagram here (see _mermaid_class_diagram).
+        class_syms = {start_sym.id: start_sym, **{s.id: s for s in core_models}}
+        class_diagram = _mermaid_class_diagram(session, repo_id, list(class_syms), class_syms)
         cm_blocks = [
             _list([f"**{s.qualified_name}** — depended on in {round(fan_in.get(s.id, 0))} places."
                    + (f" {_first_sentence(s.docstring)}" if s.docstring else "") for s in core_models]),
+            _diagram("Inheritance", class_diagram),
             _chips([_symbol_chip(s) for s in core_models]),
             _code_snippet(files_by_path, core_models[0]),
         ]
@@ -506,13 +586,28 @@ def _focus_api_surface(syms: dict[int, Symbol], files_by_path: dict[str, File]):
     return sections, summary
 
 
+def _class_body(code: str) -> str:
+    """Everything after the class declaration's own line — so a base-class
+    reference in the header (`class Repo(Base):`) is never mistaken for a
+    real relationship mention inside the class body. Every model subclasses
+    SOMETHING, so scanning the header too would make that something (often
+    itself one of the detected models, e.g. a SQLAlchemy `Base`) look
+    "mentioned" by literally every other model — noise, not a relationship."""
+    return code.split("\n", 1)[1] if "\n" in code else ""
+
+
+def _model_mentions(s: Symbol, model_names: set[str]) -> list[str]:
+    body = _class_body(s.code)
+    return sorted({n for n in model_names if n != s.name and n in body})
+
+
 def _focus_data_model(syms: dict[int, Symbol], files_by_path: dict[str, File]):
     """Real ORM/schema classes, detected from their actual base class (see
     _detect_model_base) — SQLAlchemy, Pydantic, Django, or plain dataclasses.
     "Mentions" is a real textual signal (another detected model's class name
-    appears in this one's source), not a parsed foreign key — honestly
-    labeled as such rather than overclaiming a relationship that wasn't
-    actually parsed out of the field definitions."""
+    appears in this one's class BODY — see _class_body), not a parsed
+    foreign key — honestly labeled as such rather than overclaiming a
+    relationship that wasn't actually parsed out of the field definitions."""
     models: list[tuple[Symbol, str]] = []
     for s in syms.values():
         if s.kind != "class" or not s.code:
@@ -528,15 +623,15 @@ def _focus_data_model(syms: dict[int, Symbol], files_by_path: dict[str, File]):
     model_names = {s.name for s, _ in models}
 
     def mentions(s: Symbol) -> str:
-        found = sorted({n for n in model_names if n != s.name and n in s.code})
-        return ", ".join(found) or "—"
+        return ", ".join(_model_mentions(s, model_names)) or "—"
 
     facts = ("Real data-model classes, detected from their actual base class (SQLAlchemy/Pydantic/"
              "Django/dataclass patterns): "
              + "; ".join(f"{s.qualified_name} ({base})" for s, base in models[:15]))
     rows = [[s.name, base, mentions(s)] for s, base in models]
     sections = [{"heading": None, "facts": facts,
-                "blocks": [_table(["Model", "Base", "Mentions"], rows)]}]
+                "blocks": [_diagram("Entity relationships", _mermaid_er(models)),
+                          _table(["Model", "Base", "Mentions"], rows)]}]
 
     top = models[0][0]
     sections.append({
@@ -565,7 +660,7 @@ def _focus_pipeline(session: Session, files_by_path: dict[str, File], root_sym: 
         "facts": intro_facts,
         "blocks": [
             _chips([_symbol_chip(root_sym)]),
-            _diagram(f"{root_sym.name} — execution flow", _mermaid_flow(flow)),
+            _diagram(f"{root_sym.name} — execution flow", _mermaid_sequence(flow) or _mermaid_flow(flow)),
             _code_snippet(files_by_path, root_sym),
         ],
     }, {
@@ -782,7 +877,7 @@ def build_wiki(session: Session, repo_id: int, repo_name: str, user_id: int | No
     register("getting_started", "Getting Started", "How to set up and run this project",
              _focus_getting_started(session, repo_id, eps))
     register("core_engine", "Core Engine", "The abstractions the rest of the system is built on",
-             _focus_core_engine(files_by_path, start_sym, start_why, core_models, fan_in))
+             _focus_core_engine(session, repo_id, files_by_path, start_sym, start_why, core_models, fan_in))
     register("pipeline", "Pipeline", "The most-exercised execution path through the code",
              _focus_pipeline(session, files_by_path, flow_root, package, repo_name, in_pkg, used))
 

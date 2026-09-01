@@ -9,11 +9,14 @@ const isDarkNow = () =>
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/** Renders a mechanically-generated Mermaid `flowchart` string to SVG. The
- *  source is always produced by the backend (never the LLM), so it parses; we
- *  still fall back to showing the source text if a render ever throws, so a
- *  diagram can never blank the page. Click to open a full-screen viewer that
- *  zooms and pans. Theme follows the app's light/dark. */
+/** Renders a mechanically-generated Mermaid diagram string to SVG —
+ *  flowchart, sequenceDiagram, classDiagram, erDiagram, whichever the source
+ *  starts with; mermaid.js dispatches on that itself, so nothing here is
+ *  diagram-type-specific. The source is always produced by the backend
+ *  (never the LLM), so it parses; we still fall back to showing the source
+ *  text if a render ever throws, so a diagram can never blank the page.
+ *  Click to open a full-screen viewer that zooms and pans. Theme follows the
+ *  app's light/dark. */
 export default function Mermaid({
   chart, title = "diagram", subtitle = "",
 }: {
