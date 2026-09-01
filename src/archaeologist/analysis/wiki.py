@@ -31,6 +31,7 @@ pre-computed facts, never the DB session), so they're fanned out concurrently
 with a thread pool — a page with a dozen sections still generates in seconds.
 """
 
+import logging
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -44,6 +45,8 @@ from archaeologist.analysis.entrypoints import find_entrypoints
 from archaeologist.models.entities import File, Symbol, SymbolEdge
 from archaeologist.rag.llm import call_llm, llm_available, parse_llm_json
 from archaeologist.retrieval.graph_queries import call_flow
+
+_logger = logging.getLogger("archaeologist.wiki")
 
 _START_PREF = {"factory": 0, "route": 1, "main": 2, "cli": 3, "worker": 4, "module": 5}
 _TOOLING = {
@@ -771,6 +774,13 @@ def _decide_structure(repo_name: str, menu: dict[str, str], user_id: int | None 
                        label="wiki-structure", user_id=user_id)
         data = parse_llm_json(raw)
     except Exception:
+        # Silently falling back to the mechanical page order is the right
+        # PRODUCT behavior (never break the wiki over an LLM hiccup) — but a
+        # silent `except: return None` with no log line makes a persistently
+        # failing provider (bad key, unreachable endpoint, wrong model name)
+        # completely invisible. This is deliberately .exception() (full
+        # traceback), not just a one-line warning.
+        _logger.exception("wiki structure-decision LLM call failed for %r", repo_name)
         return None
     pages = data.get("pages")
     if not isinstance(pages, list) or not pages:
@@ -811,6 +821,7 @@ def _write_prose(page_title: str, heading: str | None, facts: str, user_id: int 
                         label="wiki-prose", user_id=user_id).strip()
         return text or None
     except Exception:
+        _logger.exception("wiki prose call failed for page %r, section %r", page_title, heading)
         return None
 
 
@@ -951,6 +962,7 @@ def build_wiki(session: Session, repo_id: int, repo_name: str, user_id: int | No
                 try:
                     prose_map[task_keys[i]] = fut.result()
                 except Exception:
+                    _logger.exception("wiki prose future crashed for %r", task_keys[i])
                     prose_map[task_keys[i]] = None
 
     # ---- assemble the pages: heading → prose → mechanical artifacts ----
