@@ -161,6 +161,23 @@ def _code(title: str, path: str, line: int, lang: str, code: str | None) -> dict
     return {"kind": "code", "title": title, "path": path, "line": line, "lang": lang, "code": code} if code else None
 
 
+def _stats(items: list[tuple[str, str] | None]) -> dict | None:
+    """items: [(number-as-string, label), ...] (a None entry is dropped —
+    lets a caller conditionally include a stat inline). Every number here is
+    a real count already computed elsewhere on the page, never derived just
+    for display."""
+    clean = [{"n": n, "label": label} for n, label in (i for i in items if i) if n and label]
+    return {"kind": "stats", "items": clean} if clean else None
+
+
+def _callout(tone: str, text: str) -> dict | None:
+    """A short flagged note (tone: "info" | "warning") — used only where the
+    already-computed facts show something genuinely worth calling out (e.g.
+    one symbol's fan-in is a clear outlier vs. its peers), never as a
+    generic decoration."""
+    return {"kind": "callout", "tone": tone, "text": text} if text else None
+
+
 def _mlabel(text: str, limit: int = 40) -> str:
     t = (text or "").strip()
     return (t[: limit - 1] + "…") if len(t) > limit else t
@@ -442,7 +459,14 @@ def _focus_architecture(repo_name: str, arch: dict, eps: list[dict]):
          "facts": (f"{repo_name} is organised into {arch['counts']['submodules']} submodules across "
                    f"{arch['counts']['code_files']} code files. The submodules and what each is responsible "
                    f"for: {sub_facts}."),
-         "blocks": [_diagram("System architecture", _mermaid_architecture(repo_name, arch, eps))]},
+         "blocks": [
+             _stats([
+                 (str(arch["counts"]["submodules"]), "Submodules"),
+                 (str(arch["counts"]["code_files"]), "Code files"),
+                 (str(len(ep_list)), "Entry points") if ep_list else None,
+             ]),
+             _diagram("System architecture", _mermaid_architecture(repo_name, arch, eps)),
+         ]},
         {"heading": "Submodules",
          "facts": f"Each top-level submodule and its responsibility: {sub_facts}.",
          "blocks": [_table(["Submodule", "Responsibility"],
@@ -536,9 +560,23 @@ def _focus_core_engine(session: Session, repo_id: int, files_by_path: dict[str, 
         # discipline as every other diagram here (see _mermaid_class_diagram).
         class_syms = {start_sym.id: start_sym, **{s.id: s for s in core_models}}
         class_diagram = _mermaid_class_diagram(session, repo_id, list(class_syms), class_syms)
+
+        # A genuine outlier, not decoration: start_sym's own fan-in compared
+        # to the next-most-central type actually shown on this page —
+        # core_models is already sorted by fan-in, so [0] is that comparison.
+        start_fan, top_other_fan = fan_in.get(start_sym.id, 0), fan_in.get(core_models[0].id, 0)
+        callout = None
+        if start_fan >= 4 and top_other_fan and start_fan >= top_other_fan * 2:
+            callout = _callout(
+                "info",
+                f"**{start_sym.qualified_name}** is depended on far more than anything else here "
+                f"({round(start_fan)} vs {round(top_other_fan)} places for the next-most-central type) "
+                "— changes to it are the most likely to ripple broadly.",
+            )
         cm_blocks = [
             _list([f"**{s.qualified_name}** — depended on in {round(fan_in.get(s.id, 0))} places."
                    + (f" {_first_sentence(s.docstring)}" if s.docstring else "") for s in core_models]),
+            callout,
             _diagram("Inheritance", class_diagram),
             _chips([_symbol_chip(s) for s in core_models]),
             _code_snippet(files_by_path, core_models[0]),

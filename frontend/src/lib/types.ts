@@ -215,6 +215,7 @@ export interface SymbolIndex {
 }
 
 export interface WikiChip { kind: string; text: string; path: string; line?: number }
+export interface WikiStat { n: string; label: string }
 export type WikiBlock =
   | { kind: "p"; text: string }
   | { kind: "md"; text: string }
@@ -223,7 +224,9 @@ export type WikiBlock =
   | { kind: "chips"; chips: WikiChip[] }
   | { kind: "table"; columns: string[]; rows: string[][] }
   | { kind: "code"; title: string; path: string; line: number; lang: string; code: string }
-  | { kind: "diagram"; title: string; mermaid: string };
+  | { kind: "diagram"; title: string; mermaid: string }
+  | { kind: "stats"; items: WikiStat[] }
+  | { kind: "callout"; tone: "info" | "warning"; text: string };
 export interface WikiSection { key: string; title: string; subtitle: string; blocks: WikiBlock[] }
 export interface Wiki { repo: string; counts: { files: number; symbols: number; edges: number }; sections: WikiSection[] }
 

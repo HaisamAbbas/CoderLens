@@ -88,6 +88,26 @@
 .wk-table td { padding: 10px 14px 10px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
 .wk-table td:first-child { font-family: var(--font-mono); color: var(--text); white-space: nowrap; }
 
+/* Reuses the same .tiles/.tile primitives as Overview's stat tiles — a wiki
+   page is read inline in an article, not a dashboard grid, so this scopes
+   down the size/gap a little rather than redefining the look from scratch. */
+.wk-stats.tiles { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 4px 0 18px; }
+.wk-stats .tile { padding: 12px 14px; }
+.wk-stats .n { font-size: 21px; }
+
+.wk-callout {
+  margin: 4px 0 18px; padding: 11px 14px; border-radius: var(--r); font-size: 13.5px; line-height: 1.55;
+  border: 1px solid; border-left-width: 3px;
+}
+.wk-callout.info {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent); border-left-color: var(--accent);
+}
+.wk-callout.warning {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent); border-left-color: var(--danger);
+}
+
 .wk-chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 4px 0 18px; }
 .wk-chip {
   display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 11.5px;

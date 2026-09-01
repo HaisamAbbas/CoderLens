@@ -51,6 +51,20 @@ function Block({ block, onOpen }: { block: WikiBlock; onOpen: (c: WikiChip) => v
         <div className="wk-diagram-canvas"><Mermaid chart={block.mermaid} /></div>
       </figure>
     );
+  if (block.kind === "stats")
+    return (
+      <div className="tiles wk-stats">
+        {block.items.map((s, k) => (
+          <div key={k} className="tile"><div className="n tnum">{s.n}</div><div className="l">{s.label}</div></div>
+        ))}
+      </div>
+    );
+  if (block.kind === "callout")
+    return (
+      <div className={"wk-callout " + block.tone}>
+        <Prose text={block.text} />
+      </div>
+    );
   return (
     <div className="wk-chips">
       {block.chips.map((c, k) => (
