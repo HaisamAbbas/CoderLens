@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { PageLoading, ErrorState } from "../components/PageState";
@@ -26,6 +27,7 @@ function toDiagram(d: ArchDelta): { nodes: DiagramNode[]; edges: DiagramEdge[] }
     names.add(m.to_submodule || "core");
   }
   const filesAfter = new Map(d.after.submodules.map((s) => [s.submodule, s.files.length]));
+  const filesBy = new Map(d.after.submodules.map((s) => [s.submodule, s.files]));
 
   // The files themselves, dot-separated — a card naming client.py and server.py
   // tells you what a module *is*; a card saying "10 files" does not. Files come
@@ -63,7 +65,7 @@ function toDiagram(d: ArchDelta): { nodes: DiagramNode[]; edges: DiagramEdge[] }
     }
     return {
       id: name, title: name, subtitle, detail: detailOf.get(name) ?? "", tone,
-      weight: n ?? 0,
+      weight: n ?? 0, files: filesBy.get(name) ?? [],
     };
   });
 
@@ -144,6 +146,7 @@ function FactList({ title, items, tone }: { title: string; items: string[]; tone
 }
 
 export default function ArchDeltaPage() {
+  const nav = useNavigate();
   const refsQ = useQuery({ queryKey: ["arch-refs"], queryFn: api.architectureRefs });
   const [base, setBase] = useState("");
   const [head, setHead] = useState("");
@@ -238,6 +241,7 @@ export default function ArchDeltaPage() {
                 groupLabel={d.after.package || d.before.package || "package"}
                 nodes={diagram.nodes}
                 edges={diagram.edges}
+                onOpenFile={(path) => nav("/reader", { state: { path } })}
                 footnote={
                   diagram.edges.some((e) => e.kind === "dep")
                     ? (d.edges_live

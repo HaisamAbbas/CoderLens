@@ -353,3 +353,53 @@
 }
 .axd-bar button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .axd-bar button:disabled { opacity: 0.5; cursor: default; }
+.axd-hint {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+  padding: 5px 12px; border-radius: 999px; font-size: 11px; pointer-events: none;
+  color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border);
+  opacity: 0; transition: opacity 0.14s;
+}
+.axd:hover .axd-hint { opacity: 0.9; }
+/* The click-to-expand panel: a drawer over the right edge of the diagram frame,
+   listing the selected module's files and its full dependency wiring. */
+.axd-panel {
+  position: absolute; top: 8px; right: 8px; bottom: 8px; width: 286px; z-index: 3;
+  display: flex; flex-direction: column; gap: 12px; overflow-y: auto;
+  padding: 14px; border: 1px solid var(--border); border-radius: var(--r-md, 12px);
+  background: var(--surface); box-shadow: -8px 0 24px -18px rgba(0,0,0,0.5);
+}
+.axd-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.axd-panel-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.axd-panel-title > span:first-child { font-weight: 700; font-size: 15px; color: var(--text); font-family: var(--mono, ui-monospace, monospace); }
+.axd-panel-role { font-size: 9px; letter-spacing: 0.7px; text-transform: uppercase; font-weight: 600; }
+.axd-panel-x { border: 0; background: transparent; color: var(--text-2); cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px; }
+.axd-panel-x:hover { color: var(--text); }
+.axd-panel-sub { font-size: 11px; color: var(--text-2); margin-top: -6px; }
+.axd-panel-sec { display: flex; flex-direction: column; gap: 5px; }
+.axd-panel-k { font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-3, var(--text-2)); font-weight: 600; }
+.axd-panel-files, .axd-panel-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.axd-panel-files li {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.axd-file-open {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  border: 0; background: transparent; cursor: pointer; padding: 2px 6px; margin: 0 -6px; border-radius: 6px;
+  font: inherit; color: var(--text-2); text-align: left;
+}
+.axd-file-open > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.axd-file-open:hover { background: var(--surface-2); color: var(--text); }
+.axd-file-arrow { flex: none; color: var(--accent); opacity: 0; transition: opacity 0.1s; }
+.axd-file-open:hover .axd-file-arrow { opacity: 1; }
+.axd-panel-links li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.axd-panel-links button {
+  border: 0; background: transparent; padding: 1px 0; cursor: pointer; text-align: left;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--accent);
+}
+.axd-panel-links button:hover { text-decoration: underline; }
+.axd-panel-move { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--text-2); }
+.axd-panel-w {
+  flex: none; font-size: 10px; color: var(--text-2); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; font-variant-numeric: tabular-nums;
+}
+.axd-panel-empty { font-size: 11px; color: var(--text-2); font-style: italic; }
