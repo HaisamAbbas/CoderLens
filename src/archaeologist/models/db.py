@@ -56,6 +56,29 @@ def _ensure_additive_columns() -> None:
                     "ALTER TABLE user_integrations ADD COLUMN github_pat_encrypted text NOT NULL DEFAULT ''"
                 ))
 
+    # repos.user_id / ingest_jobs.user_id: added by Phase 2 of the multi-user
+    # migration (per-user repo ownership). A database created before that
+    # phase never got these — create_all() only creates missing TABLES, so an
+    # already-existing repos/ingest_jobs table silently kept its old
+    # single-tenant shape, and every query that filters by user_id (which is
+    # now all of them) crashes with UndefinedColumn instead of just returning
+    # nothing. Nullable, not backfilled: there is no correct user to retroactively
+    # attach a pre-migration row to, so it's left orphaned (invisible to every
+    # user's queries, same as if it didn't exist) rather than guessed at.
+    if "repos" in table_names:
+        existing = {c["name"] for c in inspector.get_columns("repos")}
+        if "user_id" not in existing:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE repos ADD COLUMN user_id integer REFERENCES users(id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_repos_user_id ON repos (user_id)"))
+
+    if "ingest_jobs" in table_names:
+        existing = {c["name"] for c in inspector.get_columns("ingest_jobs")}
+        if "user_id" not in existing:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE ingest_jobs ADD COLUMN user_id integer REFERENCES users(id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ingest_jobs_user_id ON ingest_jobs (user_id)"))
+
 
 @contextmanager
 def session_scope() -> Iterator[Session]:
