@@ -239,9 +239,14 @@
 .cm-pane-body { flex: 1; min-height: 0; position: relative; }
 .cm-pane-body .cm-canvas { height: 100%; min-height: 0; border: none; border-radius: 0; box-shadow: none; }
 
-/* split (default): diagram takes the room, output is capped + scrolls */
-.cm-main.pane-split .cm-pane-diagram { flex: 1 1 auto; min-height: 240px; }
-.cm-main.pane-split .cm-dock-body { max-height: 42vh; }
+/* split (default): the diagram is the primary view, not a fair 50/50 split —
+   the dock (simulated output + code) is a shorter strip capped well below
+   the diagram's floor, so selecting a node never squeezes the diagram down
+   to a sliver. Was 240px/42vh, which on a normal viewport left the dock's
+   own natural content height (sim panel + code strip) claiming MORE room
+   than the diagram — exactly backwards for a page about the diagram. */
+.cm-main.pane-split .cm-pane-diagram { flex: 1 1 auto; min-height: 420px; }
+.cm-main.pane-split .cm-dock-body { max-height: 26vh; }
 /* diagram maximized: output collapses to just its header */
 .cm-main.pane-diagram .cm-pane-diagram { flex: 1 1 auto; min-height: 0; }
 .cm-main.pane-diagram .cm-dock { flex: 0 0 auto; }

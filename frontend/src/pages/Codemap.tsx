@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import hljs from "highlight.js/lib/core";
-import python from "highlight.js/lib/languages/python";
 import { api } from "../lib/api";
 import CodemapView from "../components/CodemapView";
 import PhysicalFlow from "../components/PhysicalFlow";
 import SimulationPanel from "../components/SimulationPanel";
 import HistoryMenu from "../components/HistoryMenu";
 import { classifyRole } from "../lib/codemapRoles";
+import { highlightCode } from "../lib/highlight";
 import type { Codemap as CodemapResult, CodemapEdge, CodemapNode, SimStep, SimulationTrace, SymbolRef } from "../lib/types";
 
-hljs.registerLanguage("python", python);
 const STEP_MS = 3200;
-const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const SUGGESTIONS = [
   "How does Flask dispatch a request to a view function?",
@@ -64,6 +61,9 @@ export default function Codemap() {
   // header); "output" = output full (diagram collapsed). Lets the client blow
   // either screen up to full and back.
   const [mainPane, setMainPane] = useState<"split" | "diagram" | "output">("split");
+  // Output and source used to render stacked, always both, in the same
+  // already-cramped dock — now a tab, same idea as the sidebar's own tabs.
+  const [dockTab, setDockTab] = useState<"output" | "code">("output");
   const [sidebarTab, setSidebarTab] = useState<"steps" | "about">("steps");
   const traceRef = useRef<SimulationTrace | null>(trace); traceRef.current = trace;
 
@@ -128,7 +128,7 @@ export default function Codemap() {
   useEffect(() => {
     setExtra({ nodes: [], edges: [] }); setStepState(-1); setSelectedId(null); setPlaying(false);
     setEdgePopup(null); setExtendQ(""); setExtendNote("");
-    setTrace(null); setSimLoading(false); setSimError(""); setMainPane("split"); setSidebarTab("steps");
+    setTrace(null); setSimLoading(false); setSimError(""); setMainPane("split"); setDockTab("output"); setSidebarTab("steps");
   }, [result]);
 
   // dismiss the edge-explain popover on Esc or a click elsewhere
@@ -380,8 +380,21 @@ export default function Codemap() {
                   <div className="cm-dock-head">
                     <span className="cm-dock-title">
                       ⚡ <span className="mono">{selectedNode.name}</span>
-                      <span className="cm-dock-sub">{activeStep ? "simulated output" : simLoading ? "simulating…" : "source"}</span>
                     </span>
+                    <div className="cm-dock-subtabs">
+                      <button
+                        className={"cm-dock-subtab" + (dockTab === "output" ? " active" : "")}
+                        onClick={() => setDockTab("output")}
+                      >
+                        Output {simLoading && !trace && <span className="spin" />}
+                      </button>
+                      <button
+                        className={"cm-dock-subtab" + (dockTab === "code" ? " active" : "")}
+                        onClick={() => setDockTab("code")}
+                      >
+                        Code
+                      </button>
+                    </div>
                     <div className="cm-dock-tools">
                       <button className="cm-dock-btn" title={mainPane === "diagram" ? "Show output" : "Minimize output"}
                               onClick={() => setMainPane((p) => (p === "diagram" ? "split" : "diagram"))}>
@@ -395,19 +408,23 @@ export default function Codemap() {
                     </div>
                   </div>
                   <div className="cm-dock-body">
-                    {simLoading && !trace ? (
-                      <div className="sim"><div className="sim-empty"><span className="spin" /> Simulating data flow through the walkthrough…</div></div>
-                    ) : trace && activeStep ? (
-                      <SimulationPanel trace={trace} step={activeStep} node={selectedNode}
-                                       nextNode={nextNode} onOpenReader={open} />
-                    ) : simError && !trace ? (
-                      <div className="sim"><div className="sim-empty cm-sim-state err">
-                        Couldn't simulate — {simError}
-                        <button className="btn" style={{ marginLeft: 10 }} onClick={() => ensureSim(ordered.map((x) => x.id))}>Retry</button>
-                      </div></div>
-                    ) : null}
-                    {/* the code stays open alongside the input/output, always */}
-                    <CodeStrip node={selectedNode} onReader={open} onFlow={openFlow} />
+                    {dockTab === "output" ? (
+                      simLoading && !trace ? (
+                        <div className="sim"><div className="sim-empty"><span className="spin" /> Simulating data flow through the walkthrough…</div></div>
+                      ) : trace && activeStep ? (
+                        <SimulationPanel trace={trace} step={activeStep} node={selectedNode}
+                                         nextNode={nextNode} onOpenReader={open} />
+                      ) : simError && !trace ? (
+                        <div className="sim"><div className="sim-empty cm-sim-state err">
+                          Couldn't simulate — {simError}
+                          <button className="btn" style={{ marginLeft: 10 }} onClick={() => ensureSim(ordered.map((x) => x.id))}>Retry</button>
+                        </div></div>
+                      ) : (
+                        <div className="sim"><div className="sim-empty">No simulated output for this node.</div></div>
+                      )
+                    ) : (
+                      <CodeStrip node={selectedNode} onReader={open} onFlow={openFlow} />
+                    )}
                   </div>
                 </div>
               )}
@@ -491,9 +508,7 @@ function CodeStrip({ node, onReader, onFlow }: { node: CodemapNode; onReader: (n
     const lines = data.content.split("\n");
     const from = Math.max(0, node.line - 4);
     const slice = lines.slice(from, from + 20);
-    let html: string;
-    try { html = data.language === "python" ? hljs.highlight(slice.join("\n"), { language: "python" }).value : escapeHtml(slice.join("\n")); }
-    catch { html = escapeHtml(slice.join("\n")); }
+    const html = highlightCode(slice.join("\n"), data.language);
     return { html, from: from + 1, count: slice.length, hl: node.line - from - 1 };
   }, [data, node.line]);
 

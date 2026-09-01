@@ -8,9 +8,24 @@
   display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; flex-shrink: 0;
   border-bottom: 1px solid var(--border); background: var(--surface-2);
 }
-.cm-dock-title { font-size: 12.5px; font-weight: 600; color: var(--text); display: inline-flex; align-items: baseline; gap: 7px; overflow: hidden; }
+.cm-dock-title { font-size: 12.5px; font-weight: 600; color: var(--text); display: inline-flex; align-items: baseline; gap: 7px; overflow: hidden; min-width: 0; }
 .cm-dock-title .mono { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-dock-sub { font-size: 10.5px; font-weight: 400; color: var(--text-3); flex-shrink: 0; }
+/* Output vs. source used to render stacked, always both, in the dock's
+   already-tight height — this segmented toggle replaces that, one visible
+   at a time. Compact by design: the dock header is a single tight strip,
+   not room for the underline-tab style .cm-tabs uses in the sidebar. */
+.cm-dock-subtabs {
+  display: flex; gap: 2px; padding: 2px; border-radius: var(--r-sm);
+  background: var(--inset); flex-shrink: 0;
+}
+.cm-dock-subtab {
+  border: none; background: none; color: var(--text-3); cursor: pointer;
+  font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 5px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.cm-dock-subtab:hover { color: var(--text-2); }
+.cm-dock-subtab.active { color: var(--text); background: var(--card-bg); box-shadow: var(--card-glow); }
+.cm-dock-subtab .spin { width: 10px; height: 10px; }
 .cm-dock-tools { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
 .cm-dock-btn {
   width: 26px; height: 26px; border: 1px solid var(--border); background: var(--card-bg);
