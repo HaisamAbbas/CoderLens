@@ -1,13 +1,7 @@
 /* ===== Overview polish =====================================================
-   Scoped entirely under .mat so the shared primitives (.card/.tile/.chip/
-   .btn) used by every other page are never touched — Explorer, Reader,
-   Codemap, Dead code, and Communities render exactly as before.
-
-   Previously a "Material" treatment (22px card radii, 34px tonal icon
-   badges, 30px numerals, bounce-on-hover rows) — restrained down to the same
-   quiet, professional language the rest of the app already uses: smaller
-   radii matching the shared --r/--r-lg tokens, subtler icon tints, no motion
-   on hover beyond a border/background change, and no oversized type. */
+   Scoped entirely under .mat so the shared primitives (.card/.chip/.btn)
+   used by every other page are never touched — Explorer, Reader, Codemap,
+   Dead code, and Communities render exactly as before. */
 
 .mat .h1 {
   font-family: var(--font-display); font-size: 30px; font-weight: 600;
@@ -26,11 +20,3 @@
 .mat .sec-text { padding-top: 1px; }
 .mat .sec-text h3 { margin: 0; font-size: 14.5px; font-weight: 600; letter-spacing: -0.005em; }
 .mat .sec-text .cap { margin: 3px 0 0; font-size: 12px; line-height: 1.5; max-width: 56ch; }
-
-/* ---- KPI tiles: quiet leading icon, no oversized numerals ---- */
-.mat .tile-icon {
-  width: 28px; height: 28px; border-radius: var(--r-sm); display: grid; place-items: center;
-}
-.mat .tile-icon svg { width: 15px; height: 15px; }
-.mat .tile .n { font-size: 24px; }
-.mat .tile .n.mono { font-size: 18px; }

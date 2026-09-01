@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
@@ -7,8 +6,8 @@ import SectionHead from "../components/SectionHead";
 import { ErrorState, PageLoading } from "../components/PageState";
 import { usePersona } from "../lib/usePersona";
 import {
-  BoltIcon, ClusterIcon, CodeIcon, FileIcon, FlagIcon, FlameIcon, GhostIcon, GraphIcon,
-  LayersIcon, LinkIcon, RouteIcon, TargetIcon,
+  BoltIcon, ClusterIcon, FlagIcon, FlameIcon, GhostIcon,
+  LayersIcon, LinkIcon, RouteIcon,
 } from "../components/icons";
 import type { CouplingPair, Entrypoint } from "../lib/types";
 
@@ -25,15 +24,10 @@ const ENTRY_ORDER = ["route", "factory", "cli", "worker", "main", "module"];
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const short = (p: string) => p.replace(/^src\//, "");
 
-function Tile({ n, l, mono, icon, tone }: {
-  n: number | string; l: string; mono?: boolean; icon: ReactNode; tone: string;
-}) {
+function Stat({ n, l, mono, accent }: { n: number | string; l: string; mono?: boolean; accent?: boolean }) {
   return (
-    <div className="tile">
-      <span className="tile-icon" style={{ background: `color-mix(in srgb, ${tone} 15%, transparent)`, color: tone }}>
-        {icon}
-      </span>
-      <div className={"n" + (mono ? " mono" : "")}>{typeof n === "number" ? n.toLocaleString() : n}</div>
+    <div className={"ov-stat" + (accent ? " accent" : "")}>
+      <div className={"n" + (mono ? " mono" : " tnum")}>{typeof n === "number" ? n.toLocaleString() : n}</div>
       <div className="l">{l}</div>
     </div>
   );
@@ -57,14 +51,100 @@ export default function Overview() {
   const openFile = (path: string) => nav("/reader", { state: { path } });
   const dirs = [...new Set(data.reading_path.map((r) => r.path.split("/").slice(0, -1).join("/")))];
 
-  return (
-    <div className="page mat">
-      <div className="eyebrow">Overview</div>
-      <h1 className="h1" style={{ marginTop: 6 }}>{cap(data.name)}</h1>
-      <p className="lede">
-        A map of how this codebase fits together — where to start reading, what's central, and what to
-        change carefully. Reconstructed from the code, its git history, and its docs.
+  const archCard = (
+    <div className="card">
+      <SectionHead icon={<LayersIcon />} title="Architecture at a glance" cap="Computed from the dependency graph" tone="var(--text-3)" />
+      <p className="arch">
+        {cap(data.name)} spans <b>{data.counts.files} files</b> and{" "}
+        <span className="k">{data.counts.symbols.toLocaleString()}</span> symbols, wired together by{" "}
+        <b>{data.counts.edges.toLocaleString()} internal dependencies</b>. Its most connected module is{" "}
+        <span className="k">{data.most_central}</span> — the files below carry the most connections and
+        are the best place to start reading.
       </p>
+      <div className="chips">
+        {dirs.map((d) => (
+          <span key={d} className="chip"><span className="dot" style={{ background: "var(--text-3)" }} />{d}</span>
+        ))}
+      </div>
+    </div>
+  );
+
+  const readingCard = (
+    <div className="card">
+      <SectionHead icon={<RouteIcon />} title="Start here — a reading path" cap="Ordered by how central each file is to the system" tone="var(--text-3)" />
+      <ol className="reading">
+        {data.reading_path.map((r) => (
+          <li key={r.path} onClick={() => openFile(r.path)}>
+            <div>
+              <div className="f">{short(r.path)}</div>
+              <div className="why">{r.reason}</div>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+
+  const hotspotsCard = persona !== "new" && (
+    <div className="card">
+      <SectionHead icon={<FlameIcon />} title="Hotspots" cap="High churn × coupling — box size = risk, click to open" tone="var(--warn)" />
+      <Treemap
+        height={168}
+        items={data.hotspots.map((h): TreemapItem => ({
+          key: h.path,
+          label: short(h.path),
+          sub: `${h.churn} changes · ${h.coupling} deps`,
+          value: Math.max(h.score, 0.04),
+          tint: `color-mix(in srgb, var(--warn) ${Math.round(24 + h.score * 56)}%, var(--surface))`,
+          title: `${h.path} — ${h.churn} changes · ${h.coupling} dependencies`,
+          onClick: () => openFile(h.path),
+        }))}
+      />
+    </div>
+  );
+
+  const couplingCard = persona !== "new" && (
+    <CouplingCard pairs={coQ.data?.pairs ?? []} windowed={coQ.data?.windowed} windowDays={coQ.data?.window_days} onOpen={openFile} />
+  );
+
+  const deepDiveCard = persona === "senior" && (
+    <div className="card">
+      <SectionHead icon={<ClusterIcon />} title="Deep dive" cap="Extra technical signal, one click from here" tone="var(--text-3)" />
+      <div className="dd-grid">
+        <button className="dd-tile" onClick={() => nav("/dead-code")}>
+          <GhostIcon />
+          <div className="n tnum">{deadQ.data?.counts.total ?? "…"}</div>
+          <div className="l">Dead code candidates</div>
+        </button>
+        <button className="dd-tile" onClick={() => nav("/communities")}>
+          <ClusterIcon />
+          <div className="n tnum">{commQ.data?.total ?? "…"}</div>
+          <div className="l">Communities</div>
+        </button>
+      </div>
+    </div>
+  );
+
+  const rail = [hotspotsCard, couplingCard, deepDiveCard].filter(Boolean);
+
+  return (
+    <div className="page mat ov-page">
+      <div className="ov-hero">
+        <div className="ov-hero-info">
+          <div className="eyebrow">Overview</div>
+          <h1 className="h1" style={{ marginTop: 6 }}>{cap(data.name)}</h1>
+          <p className="lede">
+            A map of how this codebase fits together — where to start reading, what's central, and what to
+            change carefully. Reconstructed from the code, its git history, and its docs.
+          </p>
+        </div>
+        <div className="ov-hero-stats">
+          <Stat n={data.counts.files} l="Files" />
+          <Stat n={data.counts.symbols} l="Symbols" />
+          <Stat n={data.counts.edges} l="Dependencies" />
+          <Stat n={data.most_central} l="Most central" mono accent />
+        </div>
+      </div>
 
       {persona === "new" && (
         <div className="ov-banner">
@@ -74,82 +154,22 @@ export default function Overview() {
         </div>
       )}
 
-      <div className="tiles" style={{ marginTop: 24 }}>
-        <Tile n={data.counts.files} l="Files" icon={<FileIcon />} tone="var(--text-3)" />
-        <Tile n={data.counts.symbols} l="Symbols" icon={<CodeIcon />} tone="var(--text-3)" />
-        <Tile n={data.counts.edges} l="Dependencies" icon={<GraphIcon />} tone="var(--text-3)" />
-        <Tile n={data.most_central} l="Most central" mono icon={<TargetIcon />} tone="var(--accent)" />
-      </div>
-
-      <div className="card" style={{ marginTop: 16 }}>
-        <SectionHead icon={<LayersIcon />} title="Architecture at a glance" cap="Computed from the dependency graph" tone="var(--text-3)" />
-        <p className="arch">
-          {cap(data.name)} spans <b>{data.counts.files} files</b> and{" "}
-          <span className="k">{data.counts.symbols.toLocaleString()}</span> symbols, wired together by{" "}
-          <b>{data.counts.edges.toLocaleString()} internal dependencies</b>. Its most connected module is{" "}
-          <span className="k">{data.most_central}</span> — the files below carry the most connections and
-          are the best place to start reading.
-        </p>
-        <div className="chips">
-          {dirs.map((d) => (
-            <span key={d} className="chip"><span className="dot" style={{ background: "var(--text-3)" }} />{d}</span>
-          ))}
-        </div>
-      </div>
-
-      {persona !== "new" && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <SectionHead icon={<FlameIcon />} title="Hotspots" cap="High churn × coupling — box size = risk, click to open" tone="var(--warn)" />
-          <Treemap
-            height={200}
-            items={data.hotspots.map((h): TreemapItem => ({
-              key: h.path,
-              label: short(h.path),
-              sub: `${h.churn} changes · ${h.coupling} deps`,
-              value: Math.max(h.score, 0.04),
-              tint: `color-mix(in srgb, var(--warn) ${Math.round(24 + h.score * 56)}%, var(--surface))`,
-              title: `${h.path} — ${h.churn} changes · ${h.coupling} dependencies`,
-              onClick: () => openFile(h.path),
-            }))}
-          />
-        </div>
-      )}
-
-      {persona !== "new" && (
-        <CouplingCard pairs={coQ.data?.pairs ?? []} windowed={coQ.data?.windowed} windowDays={coQ.data?.window_days} onOpen={openFile} />
-      )}
-
-      {persona === "senior" && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <SectionHead icon={<ClusterIcon />} title="Deep dive" cap="Extra technical signal, one click from here" tone="var(--text-3)" />
-          <div className="dd-grid">
-            <button className="dd-tile" onClick={() => nav("/dead-code")}>
-              <GhostIcon />
-              <div className="n tnum">{deadQ.data?.counts.total ?? "…"}</div>
-              <div className="l">Dead code candidates</div>
-            </button>
-            <button className="dd-tile" onClick={() => nav("/communities")}>
-              <ClusterIcon />
-              <div className="n tnum">{commQ.data?.total ?? "…"}</div>
-              <div className="l">Communities</div>
-            </button>
+      {rail.length > 0 ? (
+        <div className="ov-grid">
+          <div className="ov-col-main">
+            {archCard}
+            {readingCard}
+          </div>
+          <div className="ov-col-rail">
+            {rail.map((card, i) => <div key={i}>{card}</div>)}
           </div>
         </div>
+      ) : (
+        <div className="ov-col-main ov-stack-solo">
+          {archCard}
+          {readingCard}
+        </div>
       )}
-
-      <div className="card" style={{ marginTop: 16 }}>
-        <SectionHead icon={<RouteIcon />} title="Start here — a reading path" cap="Ordered by how central each file is to the system" tone="var(--text-3)" />
-        <ol className="reading">
-          {data.reading_path.map((r) => (
-            <li key={r.path} onClick={() => openFile(r.path)}>
-              <div>
-                <div className="f">{short(r.path)}</div>
-                <div className="why">{r.reason}</div>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </div>
 
       <Entrypoints
         items={epQ.data?.entrypoints ?? []}
@@ -167,7 +187,7 @@ function CouplingCard({
 }: { pairs: CouplingPair[]; windowed?: boolean; windowDays: number | null | undefined; onOpen: (path: string) => void }) {
   if (!pairs.length) return null;
   return (
-    <div className="card" style={{ marginTop: 16 }}>
+    <div className="card">
       <SectionHead
         icon={<LinkIcon />} tone="var(--text-3)" title="Change coupling"
         cap={`Files that change together in the same commit${windowed && windowDays ? ` · last ${windowDays} days` : " · full history"} — a signal independent of imports`}
@@ -194,7 +214,7 @@ function Entrypoints({ items, onOpen }: { items: Entrypoint[]; onOpen: (e: Entry
     .map((k) => [k, items.filter((i) => i.kind === k)] as const)
     .filter(([, v]) => v.length);
   return (
-    <div className="card" style={{ marginTop: 16 }}>
+    <div className="card ov-entrypoints">
       <SectionHead icon={<BoltIcon />} title="Entrypoints" cap="Where execution begins — click one to trace its call flow" tone="var(--text-3)" />
       <div className="ep-groups">
         {groups.map(([kind, list]) => {
