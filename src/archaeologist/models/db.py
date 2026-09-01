@@ -72,6 +72,26 @@ def _ensure_additive_columns() -> None:
                 conn.execute(text("ALTER TABLE repos ADD COLUMN user_id integer REFERENCES users(id)"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_repos_user_id ON repos (user_id)"))
 
+        # Pre-migration schema had `url` globally unique (one shared repo
+        # table, no owner) — a database from before Phase 2 still enforces
+        # that old single-column constraint, which blocks re-ingesting any
+        # URL that already has a row (even for the SAME user, and even after
+        # user_id above exists) since Postgres checks the old index first.
+        # Swap it for the new composite (user_id, url) one the model actually
+        # declares now; re-add a plain index on url alone so lookups by url
+        # don't lose their index in the process.
+        indexes = {ix["name"]: ix for ix in inspector.get_indexes("repos")}
+        unique_constraints = {uc["name"] for uc in inspector.get_unique_constraints("repos")}
+        old_unique_index = indexes.get("ix_repos_url")
+        with engine.begin() as conn:
+            if old_unique_index and old_unique_index.get("unique"):
+                conn.execute(text("DROP INDEX IF EXISTS ix_repos_url"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_repos_url ON repos (url)"))
+            if "uq_repo_user_url" not in unique_constraints:
+                conn.execute(text(
+                    "ALTER TABLE repos ADD CONSTRAINT uq_repo_user_url UNIQUE (user_id, url)"
+                ))
+
     if "ingest_jobs" in table_names:
         existing = {c["name"] for c in inspector.get_columns("ingest_jobs")}
         if "user_id" not in existing:
