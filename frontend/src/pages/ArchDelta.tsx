@@ -192,7 +192,7 @@ export default function ArchDeltaPage() {
 
   return (
     <div className="page">
-      <div className="eyebrow">Architecture Delta</div>
+      <div className="eyebrow">Commitsmap</div>
       <h1 className="h1" style={{ marginTop: 6 }}>How the structure changed</h1>
       <p className="lede">
         Every other page describes this codebase as it stands today. This one compares two points in
