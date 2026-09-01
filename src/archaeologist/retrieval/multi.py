@@ -39,27 +39,29 @@ def _norm_evidence(source: dict) -> dict:
     }
 
 
-def search_all(client, embedder, query: str, k: int = 8, candidates: int = 15,
+def search_all(client, embedder, query: str, repo_id: int, k: int = 8, candidates: int = 15,
                streams: list[str] | None = None) -> list[dict]:
-    """Fused search across streams. `streams` filters to a subset (default all)."""
+    """Fused search across streams, scoped to one repo — `repo_id` is
+    required (no default) so a caller can't accidentally search the whole
+    shared, multi-repo index. `streams` filters to a subset (default all)."""
     want = set(streams) if streams else set(ALL_STREAMS)
     vector = embedder.embed_query(query) if embedder is not None else None
     rankings: list[list[tuple[str, dict]]] = []
 
     if "code" in want:
         rankings.append([(cid, _norm_code(src)) for cid, src in
-                         code_index.bm25_hits(client, query, candidates)])
+                         code_index.bm25_hits(client, query, candidates, repo_id)])
         if vector is not None:
             rankings.append([(cid, _norm_code(src)) for cid, src in
-                             code_index.knn_hits(client, vector, candidates)])
+                             code_index.knn_hits(client, vector, candidates, repo_id)])
 
     evidence_streams = [s for s in want if s in EVIDENCE_STREAMS]
     if evidence_streams:
         rankings.append([(eid, _norm_evidence(src)) for eid, src in
-                         evidence_index.bm25_hits(client, query, candidates, evidence_streams)])
+                         evidence_index.bm25_hits(client, query, candidates, repo_id, evidence_streams)])
         if vector is not None:
             rankings.append([(eid, _norm_evidence(src)) for eid, src in
-                             evidence_index.knn_hits(client, vector, candidates, evidence_streams)])
+                             evidence_index.knn_hits(client, vector, candidates, repo_id, evidence_streams)])
 
     results = []
     for _id, score, source in rrf(rankings)[:k]:

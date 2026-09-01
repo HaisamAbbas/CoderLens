@@ -217,21 +217,25 @@ def publish_wiki(
     repo_label: str,
     wiki: dict,
     section_keys: list[str],
+    credentials: dict,
     on_progress=None,
 ) -> dict:
     """Publish the requested sections (in the wiki's own order) under one
-    parent page. Returns {"parent_url", "results"} with one entry per section."""
+    parent page. `credentials` is one user's decrypted Confluence connection
+    (base_url, email, api_token, space_key) from user_integrations.py.
+    Returns {"parent_url", "results"} with one entry per section."""
     wanted = set(section_keys)
     sections = [s for s in wiki.get("sections", []) if s.get("key") in wanted]
+    space_key = credentials["space_key"]
 
-    with confluence_client.open_client() as client:
-        parent = ensure_parent_page(client, settings.confluence_space_key, repo_label, wiki)
+    with confluence_client.open_client(
+        credentials["base_url"], credentials["email"], credentials["api_token"]
+    ) as client:
+        parent = ensure_parent_page(client, space_key, repo_label, wiki)
 
         results: list[dict] = []
         for section in sections:
-            result = publish_section(
-                client, settings.confluence_space_key, parent.id, repo_label, section
-            )
+            result = publish_section(client, space_key, parent.id, repo_label, section)
             results.append(result)
             if on_progress is not None:
                 on_progress(list(results))

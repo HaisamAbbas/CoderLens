@@ -49,12 +49,40 @@ def _index_body(dim: int) -> dict:
     }
 
 
-def create_index(client: OpenSearch, recreate: bool = True, dim: int | None = None) -> None:
+def _existing_dim(client: OpenSearch, index_name: str) -> int | None:
+    try:
+        mapping = client.indices.get_mapping(index=index_name)
+        return mapping[index_name]["mappings"]["properties"]["embedding"]["dimension"]
+    except Exception:
+        return None
+
+
+def create_index(client: OpenSearch, recreate: bool = False, dim: int | None = None) -> None:
+    """Create the index if missing. Only destroys and rebuilds an existing
+    index when `recreate` is explicitly requested or the embedding dimension
+    genuinely changed (e.g. switching embedding providers) — NOT on every
+    routine ingest, which used to wipe every other repo's indexed data every
+    single time (`create_index(..., recreate=True)` was called unconditionally
+    on every ingest). Per-repo re-indexing goes through `delete_repo_docs`
+    instead, so one repo's re-ingest never touches another's documents."""
+    dim = dim or settings.embedding_dim
     if client.indices.exists(index=SYMBOL_INDEX):
-        if not recreate:
+        if recreate or _existing_dim(client, SYMBOL_INDEX) not in (None, dim):
+            client.indices.delete(index=SYMBOL_INDEX)
+        else:
             return
-        client.indices.delete(index=SYMBOL_INDEX)
-    client.indices.create(index=SYMBOL_INDEX, body=_index_body(dim or settings.embedding_dim))
+    client.indices.create(index=SYMBOL_INDEX, body=_index_body(dim))
+
+
+def delete_repo_docs(client: OpenSearch, repo_id: int) -> None:
+    """Remove just one repo's symbols before re-indexing it — the additive
+    counterpart to `create_index`'s no-longer-unconditional wipe."""
+    if not client.indices.exists(index=SYMBOL_INDEX):
+        return
+    client.delete_by_query(
+        index=SYMBOL_INDEX, body={"query": {"term": {"repo_id": repo_id}}},
+        refresh=True, conflicts="proceed",
+    )
 
 
 def index_documents(client: OpenSearch, docs: list[dict]) -> int:
@@ -65,19 +93,28 @@ def index_documents(client: OpenSearch, docs: list[dict]) -> int:
     return success
 
 
-def bm25_hits(client: OpenSearch, query: str, k: int) -> list[tuple[str, dict]]:
-    """Raw (id, _source) pairs, ranked, for RRF fusion."""
+def bm25_hits(client: OpenSearch, query: str, k: int, repo_id: int) -> list[tuple[str, dict]]:
+    """Raw (id, _source) pairs, ranked, for RRF fusion — scoped to one repo."""
     body = {
         "size": k,
-        "query": {"multi_match": {"query": query, "fields": SEARCH_FIELDS, "type": "best_fields"}},
+        "query": {
+            "bool": {
+                "must": [{"multi_match": {"query": query, "fields": SEARCH_FIELDS, "type": "best_fields"}}],
+                "filter": [{"term": {"repo_id": repo_id}}],
+            }
+        },
     }
     resp = client.search(index=SYMBOL_INDEX, body=body)
     return [(h["_id"], h["_source"]) for h in resp["hits"]["hits"]]
 
 
-def knn_hits(client: OpenSearch, vector: list[float], k: int) -> list[tuple[str, dict]]:
-    """Raw (id, _source) pairs from vector search, ranked, for RRF fusion."""
-    body = {"size": k, "query": {"knn": {"embedding": {"vector": vector, "k": k}}}}
+def knn_hits(client: OpenSearch, vector: list[float], k: int, repo_id: int) -> list[tuple[str, dict]]:
+    """Raw (id, _source) pairs from vector search, ranked, for RRF fusion —
+    scoped to one repo via the Lucene engine's native k-NN filter."""
+    body = {
+        "size": k,
+        "query": {"knn": {"embedding": {"vector": vector, "k": k, "filter": {"term": {"repo_id": repo_id}}}}},
+    }
     resp = client.search(index=SYMBOL_INDEX, body=body)
     return [(h["_id"], h["_source"]) for h in resp["hits"]["hits"]]
 
@@ -94,12 +131,20 @@ def format_hit(source: dict, score: float) -> dict:
     }
 
 
-def search(client: OpenSearch, query: str, k: int = 5, kind: str | None = None) -> list[dict]:
-    """BM25-only convenience search (used by the Phase 2 notebook)."""
+def search(client: OpenSearch, query: str, k: int = 5, kind: str | None = None,
+           repo_id: int | None = None) -> list[dict]:
+    """BM25-only convenience search (used by the Phase 2 notebook). `repo_id`
+    is optional here only because this helper is a direct-DB debug/notebook
+    entry point, not a request path — every production caller must pass it."""
     bool_query: dict = {
         "must": [{"multi_match": {"query": query, "fields": SEARCH_FIELDS, "type": "best_fields"}}]
     }
+    filters = []
     if kind:
-        bool_query["filter"] = [{"term": {"kind": kind}}]
+        filters.append({"term": {"kind": kind}})
+    if repo_id is not None:
+        filters.append({"term": {"repo_id": repo_id}})
+    if filters:
+        bool_query["filter"] = filters
     resp = client.search(index=SYMBOL_INDEX, body={"size": k, "query": {"bool": bool_query}})
     return [format_hit(h["_source"], h["_score"]) for h in resp["hits"]["hits"]]

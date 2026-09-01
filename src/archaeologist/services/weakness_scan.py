@@ -102,12 +102,12 @@ def _scan(job_id: str, repo_id: int, scan_all: bool) -> None:
         repo = session.get(Repo, repo_id)
         if repo is None:
             raise RuntimeError("Unknown repository for scan job")
-        head_sha = repo.head_sha
+        head_sha, user_id = repo.head_sha, repo.user_id
         files, total_code = weaknesses.select_files(session, repo_id,
                                                     weaknesses.MAX_FILES, scan_all)
 
     # Scope 2 — LLM fan-out with no DB transaction pinned.
-    findings, notes = weaknesses.scan_files(files, total_code, scan_all, on_progress)
+    findings, notes = weaknesses.scan_files(files, total_code, scan_all, on_progress, user_id)
 
     # Scope 3 — persist inside the same short transaction that replaces
     # prior new/dismissed rows.

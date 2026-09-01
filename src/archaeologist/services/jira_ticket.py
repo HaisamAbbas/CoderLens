@@ -14,10 +14,9 @@ import uuid
 
 from sqlalchemy import select
 
-from archaeologist.config import settings
 from archaeologist.models.db import session_scope
-from archaeologist.models.entities import JiraTicketJob, Weakness
-from archaeologist.services import jira_client
+from archaeologist.models.entities import JiraTicketJob, Repo, Weakness
+from archaeologist.services import jira_client, user_integrations
 
 
 def _serialize(job: JiraTicketJob) -> dict:
@@ -84,23 +83,30 @@ def _run(job_id: str, repo_id: int, finding_ids: list[int]) -> None:
 
 
 def _ticket(job_id: str, repo_id: int, finding_ids: list[int]) -> None:
-    if not settings.jira_configured:
-        raise RuntimeError("Jira is not configured — set JIRA_* in .env.")
+    with session_scope() as session:
+        repo = session.get(Repo, repo_id)
+        if repo is None:
+            raise RuntimeError("Unknown repository for ticket job")
+        integ = user_integrations.get(session, repo.user_id)
+        if not user_integrations.jira_configured(integ):
+            raise RuntimeError("Jira is not connected — set it up in Settings.")
+        credentials = user_integrations.jira_credentials(integ)
 
     def on_progress(results_so_far: list[dict]) -> None:
         _update(job_id, results=results_so_far)
 
-    outcome = _create_batch(repo_id, finding_ids, settings.jira_project_key,
-                            settings.jira_issue_type, on_progress)
+    outcome = _create_batch(repo_id, finding_ids, credentials, on_progress)
     _update(job_id, results=outcome)
 
 
-def _create_batch(repo_id: int, finding_ids: list[int], project_key: str,
-                  issue_type: str, on_progress) -> list[dict]:
+def _create_batch(repo_id: int, finding_ids: list[int], credentials: dict, on_progress) -> list[dict]:
     """One external POST + one Weakness write-back per finding, each guarded —
     an invalid issue type or a network blip fails exactly its own item."""
+    project_key, issue_type = credentials["project_key"], credentials["issue_type"]
     results: list[dict] = []
-    with jira_client.open_client() as client:
+    with jira_client.open_client(
+        credentials["base_url"], credentials["email"], credentials["api_token"]
+    ) as client:
         for fid in finding_ids:
             result = _ticket_one(client, repo_id, fid, project_key, issue_type)
             results.append(result)

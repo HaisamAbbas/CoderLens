@@ -287,12 +287,11 @@ def test_client_raises_clear_error_on_bad_credentials():
 
 
 def test_full_publish_wiki_flow_with_progress_callback(fake, monkeypatch):
-    # publish_wiki builds its own client and reads the destination space from
-    # settings — point both at the fake for this test.
-    monkeypatch.setattr(settings, "confluence_space_key", "DOC")
+    # publish_wiki builds its own client from the credentials dict — point
+    # the client factory at the fake for this test.
     monkeypatch.setattr(
         confluence_publish.confluence_client, "open_client",
-        lambda: fake_client(fake),
+        lambda base_url, email, api_token: fake_client(fake),
     )
 
     sec2 = {**WIKI_SECTION, "key": "getting_started", "title": "Getting Started"}
@@ -300,10 +299,12 @@ def test_full_publish_wiki_flow_with_progress_callback(fake, monkeypatch):
         "repo": "flask", "counts": {"files": 5},
         "sections": [WIKI_SECTION, sec2],
     }
+    credentials = {"base_url": "https://t.atlassian.net/wiki", "email": "a@b.com",
+                   "api_token": "tok", "space_key": "DOC"}
 
     progress: list[list[dict]] = []
     outcome = confluence_publish.publish_wiki(
-        "o/r", wiki, ["architecture", "getting_started"],
+        "o/r", wiki, ["architecture", "getting_started"], credentials,
         on_progress=lambda results: progress.append(list(results)),
     )
 

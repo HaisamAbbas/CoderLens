@@ -49,6 +49,12 @@
 .lp-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow-lg); }
 .lp-search input { flex: 1; border: none; background: none; outline: none; color: var(--text); font-size: 17px; padding: 16px 0; }
 
+.lp-github-signin {
+  display: inline-block; text-decoration: none;
+  padding: 14px 30px; font-size: 15px; border-radius: 999px;
+  box-shadow: var(--shadow-lg);
+}
+
 /* Private-repo token row (below the search bar) */
 .lp-private { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 12px; }
 .lp-private-toggle {

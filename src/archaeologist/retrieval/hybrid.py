@@ -22,12 +22,13 @@ def rrf(result_lists: list[list[tuple[str, dict]]], k: int = RRF_K) -> list[tupl
     return [(doc_id, scores[doc_id], sources[doc_id]) for doc_id in ordered]
 
 
-def hybrid_search(client, embedder, query: str, k: int = 5, candidates: int = 20) -> list[dict]:
-    """Return top-k fused hits. `embedder` may be None (BM25-only)."""
-    rankings = [code_index.bm25_hits(client, query, candidates)]
+def hybrid_search(client, embedder, query: str, k: int = 5, candidates: int = 20,
+                  repo_id: int = 0) -> list[dict]:
+    """Return top-k fused hits, scoped to one repo. `embedder` may be None (BM25-only)."""
+    rankings = [code_index.bm25_hits(client, query, candidates, repo_id)]
     if embedder is not None:
         vector = embedder.embed_query(query)
-        rankings.append(code_index.knn_hits(client, vector, candidates))
+        rankings.append(code_index.knn_hits(client, vector, candidates, repo_id))
 
     fused = rrf(rankings)[:k]
     return [code_index.format_hit(source, score) for _id, score, source in fused]

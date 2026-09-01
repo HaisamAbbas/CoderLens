@@ -52,7 +52,8 @@ def plan_node(state: InvestigationState) -> dict:
             "streams": None,
             "trace": state["trace"] + [f"PLAN offline (no LLM) — retrieving {q!r}"],
         }
-    raw = call_llm(PLAN_SYS, f"Question: {q}" + _history_block(state.get("history")), max_tokens=400)
+    raw = call_llm(PLAN_SYS, f"Question: {q}" + _history_block(state.get("history")), max_tokens=400,
+                   label="investigate-plan", user_id=state["user_id"])
     plan = parse_llm_json(raw, {"search_queries": [q], "graph_targets": [], "streams": None})
     queries = (plan.get("search_queries") or [q])[:4]
     targets = plan.get("graph_targets") or []
@@ -69,14 +70,14 @@ def retrieve_node(state: InvestigationState) -> dict:
     evidence = list(state["evidence"])
     seen = {(e["stream"], e["citation"], e["title"]) for e in evidence}
 
-    for hit in tools.search(state["queries"], state.get("streams")):
+    for hit in tools.search(state["queries"], state.get("streams"), state["repo_id"]):
         key = (hit["stream"], hit["citation"], hit["title"])
         if key not in seen:
             seen.add(key)
             evidence.append(hit)
 
     if state["iterations"] == 0 and state.get("graph_targets"):
-        for ev in tools.graph_expand(state["graph_targets"]):
+        for ev in tools.graph_expand(state["graph_targets"], state["repo_id"]):
             key = (ev["stream"], ev["citation"], ev["title"])
             if key not in seen:
                 seen.add(key)
@@ -109,7 +110,8 @@ def grade_node(state: InvestigationState) -> dict:
                 f"GRADE offline sufficient={sufficient} evidence={len(state['evidence'])}"
             ],
         }
-    raw = call_llm(GRADE_SYS, f"Question: {state['question']}\n\nEvidence:\n{summary}", max_tokens=300)
+    raw = call_llm(GRADE_SYS, f"Question: {state['question']}\n\nEvidence:\n{summary}", max_tokens=300,
+                   label="investigate-grade", user_id=state["user_id"])
     g = parse_llm_json(raw, {"sufficient": True, "missing": "", "followup_queries": []})
     sufficient = bool(g.get("sufficient"))
     followups = g.get("followup_queries") or []
@@ -128,7 +130,8 @@ def synthesize_node(state: InvestigationState) -> dict:
         answer = prompts.build_digest(state["question"], state["evidence"])
         return {"answer": answer, "trace": state["trace"] + ["SYNTHESIZE (offline digest)"]}
     prompt = prompts.build_prompt(state["question"], state["evidence"], state.get("history"), state.get("simple", False))
-    answer = call_llm(prompts.SYSTEM, prompt, max_tokens=1200, label="investigate-synthesize")
+    answer = call_llm(prompts.SYSTEM, prompt, max_tokens=1200, label="investigate-synthesize",
+                      user_id=state["user_id"])
     return {"answer": answer, "trace": state["trace"] + ["SYNTHESIZE"]}
 
 
@@ -141,7 +144,8 @@ def synthesize_stream(state: InvestigationState):
         yield prompts.build_digest(state["question"], state["evidence"])
         return
     prompt = prompts.build_prompt(state["question"], state["evidence"], state.get("history"), state.get("simple", False))
-    yield from call_llm_stream(prompts.SYSTEM, prompt, max_tokens=1200, label="investigate-synthesize-stream")
+    yield from call_llm_stream(prompts.SYSTEM, prompt, max_tokens=1200, label="investigate-synthesize-stream",
+                               user_id=state["user_id"])
 
 
 def route_after_grade(state: InvestigationState) -> str:

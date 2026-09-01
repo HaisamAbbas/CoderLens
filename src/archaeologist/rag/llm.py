@@ -52,6 +52,8 @@ def resolve_provider() -> str | None:
         return "alibaba" if settings.alibaba_api_key and settings.alibaba_base_url else None
     if raw == "aihubmix":
         return "aihubmix" if settings.aihubmix_api_key else None
+    if raw == "zai":
+        return "zai" if settings.zai_api_key else None
     if raw == "ollama":
         return "ollama" if ollama_available() else None
     # "auto" (or empty): hosted key first, then local, then offline.
@@ -65,6 +67,8 @@ def resolve_provider() -> str | None:
         return "alibaba"
     if settings.aihubmix_api_key:
         return "aihubmix"
+    if settings.zai_api_key:
+        return "zai"
     return "ollama" if ollama_available() else None
 
 
@@ -89,14 +93,17 @@ def active_model() -> str:
         return settings.alibaba_model
     if provider == "aihubmix":
         return settings.aihubmix_model
+    if provider == "zai":
+        return settings.zai_model
     if provider == "ollama":
         return settings.ollama_model
     return "none"
 
 
 def call_llm(system: str, user: str, max_tokens: int = 1024, temperature: float = 0.0,
-             label: str = "") -> str:
+             label: str = "", user_id: int | None = None) -> str:
     from archaeologist import telemetry
+    from archaeologist.services import usage
 
     provider = resolve_provider()
     if provider is None:
@@ -115,11 +122,14 @@ def call_llm(system: str, user: str, max_tokens: int = 1024, temperature: float 
             out = _call_alibaba(system, user, max_tokens, temperature)
         elif provider == "aihubmix":
             out = _call_aihubmix(system, user, max_tokens, temperature)
+        elif provider == "zai":
+            out = _call_zai(system, user, max_tokens, temperature)
         elif provider == "ollama":
             out = _call_ollama(system, user, max_tokens, temperature)
         else:  # pragma: no cover - resolve_provider guards this
             raise RuntimeError(f"Unknown llm provider: {provider!r}")
     telemetry.record_llm(provider, active_model(), t.ms, len(system) + len(user), len(out), label)
+    usage.record(user_id, "llm", provider, active_model(), label, len(system) + len(user), len(out))
     return out
 
 
@@ -319,15 +329,64 @@ def _call_aihubmix(system: str, user: str, max_tokens: int, temperature: float) 
     raise RuntimeError(f"AIHubMix request failed: {last_exc}") from last_exc
 
 
+_ZAI_URL = "https://api.z.ai/api/paas/v4"
+
+
+def _call_zai(system: str, user: str, max_tokens: int, temperature: float) -> str:
+    """Z.AI (Zhipu) direct API — GLM models. Confirmed live: GLM-5.3 ALWAYS
+    reasons (Z.AI's own docs: "Disabling reasoning is no longer supported" —
+    the older thinking.type="disabled" now makes the request fail outright),
+    so a caller asking for a short answer can get finish_reason="length" with
+    empty-looking content if reasoning eats the whole budget (observed
+    directly: max_tokens=20 spent 18 on reasoning, 2 left for "OK"). Mitigate
+    the same way as OpenRouter's hybrid-reasoning models: pad the requested
+    budget and ask for the lowest reasoning effort, rather than trying to
+    suppress reasoning entirely (not offered here)."""
+    if not settings.zai_api_key:
+        raise RuntimeError("ZAI_API_KEY not set in .env")
+    import httpx
+
+    url = f"{_ZAI_URL}/chat/completions"
+    headers = {"Authorization": f"Bearer {settings.zai_api_key}"}
+    payload = {
+        "model": settings.zai_model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens + 600,
+        "temperature": temperature,
+        "reasoning_effort": "low",
+    }
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = httpx.post(url, json=payload, headers=headers, timeout=90.0)
+            if resp.status_code == 429 and attempt < 2:
+                time.sleep(5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            choice = (data.get("choices") or [{}])[0]
+            return (choice.get("message") or {}).get("content") or ""
+        except Exception as exc:  # noqa: BLE001 - retry transient failures
+            last_exc = exc
+            if attempt == 2:
+                break
+            time.sleep(3 * (attempt + 1))
+    raise RuntimeError(f"Z.AI request failed: {last_exc}") from last_exc
+
+
 def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature: float = 0.0,
-                     label: str = ""):
+                     label: str = "", user_id: int | None = None):
     """Like `call_llm`, but yields text deltas as they arrive instead of
     returning one blocking string. True token streaming is implemented for the
-    OpenAI-compatible providers (alibaba, aihubmix, openrouter) and ollama;
+    OpenAI-compatible providers (alibaba, aihubmix, zai, openrouter) and ollama;
     gemini/anthropic/unknown fall back to a single chunk containing the full
     answer (a correct, if non-incremental, degradation — callers just see one
     big delta instead of many small ones)."""
     from archaeologist import telemetry
+    from archaeologist.services import usage
 
     provider = resolve_provider()
     if provider is None:
@@ -349,6 +408,13 @@ def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature:
                 {"Authorization": f"Bearer {settings.aihubmix_api_key}"},
                 settings.aihubmix_model, system, user, max_tokens, temperature,
             )
+        elif provider == "zai":
+            gen = _stream_openai_compat(
+                f"{_ZAI_URL}/chat/completions",
+                {"Authorization": f"Bearer {settings.zai_api_key}"},
+                settings.zai_model, system, user, max_tokens + 600, temperature,
+                extra={"reasoning_effort": "low"},
+            )
         elif provider == "openrouter":
             gen = _stream_openai_compat(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -362,6 +428,9 @@ def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature:
         else:
             # gemini / anthropic: no streaming client wired up yet — yield the
             # whole answer as one chunk so callers still get a correct result.
+            # user_id=None here deliberately: this whole function records usage
+            # once at the bottom, for every path — the inner call must not also
+            # record, or this fallback path would double-count the cost.
             text = call_llm(system, user, max_tokens, temperature, label=label)
             out_len = len(text)
             yield text
@@ -371,6 +440,7 @@ def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature:
                 out_len += len(chunk)
                 yield chunk
     telemetry.record_llm(provider, active_model(), t.ms, len(system) + len(user), out_len, label)
+    usage.record(user_id, "llm", provider, active_model(), label, len(system) + len(user), out_len)
 
 
 def _stream_openai_compat(url: str, headers: dict, model: str, system: str, user: str,

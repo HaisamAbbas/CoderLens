@@ -48,6 +48,7 @@ def _doc_files(session: Session, repo_id: int) -> list[dict]:
     for f in files:
         for i, chunk in enumerate(chunk_text(f.content)):
             out.append({
+                "repo_id": repo_id,
                 "stream": "doc",
                 "ref_id": f"{f.path}#{i}",
                 "title": f.path,
@@ -63,6 +64,7 @@ def _commits(session: Session, repo_id: int) -> list[dict]:
     for c in session.scalars(select(Commit).where(Commit.repo_id == repo_id)).all():
         subject = (c.message or "").splitlines()[0] if c.message else ""
         out.append({
+            "repo_id": repo_id,
             "stream": "commit",
             "ref_id": c.sha,
             "title": subject,
@@ -80,6 +82,7 @@ def _issues(session: Session, repo_id: int) -> list[dict]:
     for it in session.scalars(select(Issue).where(Issue.repo_id == repo_id)).all():
         kind = "PR" if it.is_pull_request else "issue"
         out.append({
+            "repo_id": repo_id,
             "stream": "issue",
             "ref_id": str(it.number),
             "title": it.title or "",

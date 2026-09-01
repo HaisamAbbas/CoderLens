@@ -35,10 +35,13 @@ def build_agent():
 
 
 def _initial_state(
-    question: str, max_iterations: int, history: list[dict] | None, simple: bool = False,
+    question: str, repo_id: int, user_id: int, max_iterations: int,
+    history: list[dict] | None, simple: bool = False,
 ) -> InvestigationState:
     return {
         "question": question,
+        "repo_id": repo_id,
+        "user_id": user_id,
         "history": history or [],
         "queries": [],
         "graph_targets": [],
@@ -55,16 +58,18 @@ def _initial_state(
 
 
 def investigate(
-    question: str, max_iterations: int = 2, history: list[dict] | None = None, simple: bool = False,
+    question: str, repo_id: int, user_id: int, max_iterations: int = 2,
+    history: list[dict] | None = None, simple: bool = False,
 ) -> dict:
     agent = build_agent()
-    state = agent.invoke(_initial_state(question, max_iterations, history, simple))
+    state = agent.invoke(_initial_state(question, repo_id, user_id, max_iterations, history, simple))
     state.update(nodes.synthesize_node(state))
     return state
 
 
 def investigate_stream(
-    question: str, max_iterations: int = 2, history: list[dict] | None = None, simple: bool = False,
+    question: str, repo_id: int, user_id: int, max_iterations: int = 2,
+    history: list[dict] | None = None, simple: bool = False,
 ):
     """Generator yielding SSE-style events as the investigation runs:
 
@@ -79,7 +84,7 @@ def investigate_stream(
     synthesis then streams its own token deltas on top (see module docstring).
     """
     agent = build_agent()
-    initial = _initial_state(question, max_iterations, history, simple)
+    initial = _initial_state(question, repo_id, user_id, max_iterations, history, simple)
     try:
         seen = 0
         final = None

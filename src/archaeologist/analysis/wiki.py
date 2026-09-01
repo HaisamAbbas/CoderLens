@@ -494,13 +494,14 @@ short, specific title for each page. Return ONLY JSON:
 {"pages": [{"focus": "<exact focus key from the menu>", "title": "<short specific title>"}]}"""
 
 
-def _decide_structure(repo_name: str, menu: dict[str, str]) -> list[tuple[str, str]] | None:
+def _decide_structure(repo_name: str, menu: dict[str, str], user_id: int | None = None) -> list[tuple[str, str]] | None:
     if not llm_available() or not menu:
         return None
     listing = "\n".join(f"- {key}: {desc}" for key, desc in menu.items())
     user = f"Repo: {repo_name}\n\nAvailable focuses:\n{listing}"
     try:
-        raw = call_llm(STRUCTURE_SYS, user, max_tokens=800, temperature=0.2, label="wiki-structure")
+        raw = call_llm(STRUCTURE_SYS, user, max_tokens=800, temperature=0.2,
+                       label="wiki-structure", user_id=user_id)
         data = parse_llm_json(raw)
     except Exception:
         return None
@@ -533,13 +534,14 @@ Rules:
   added around your text automatically. Return ONLY prose paragraphs."""
 
 
-def _write_prose(page_title: str, heading: str | None, facts: str) -> str | None:
+def _write_prose(page_title: str, heading: str | None, facts: str, user_id: int | None = None) -> str | None:
     if not llm_available() or not facts:
         return None
     sec_line = f"Section: {heading}\n" if heading else "Section: (page introduction)\n"
     user = f"Page: {page_title}\n{sec_line}\nReal facts (use ONLY these):\n{facts}"
     try:
-        text = call_llm(PAGE_SYS, user, max_tokens=900, temperature=0.35, label="wiki-prose").strip()
+        text = call_llm(PAGE_SYS, user, max_tokens=900, temperature=0.35,
+                        label="wiki-prose", user_id=user_id).strip()
         return text or None
     except Exception:
         return None
@@ -547,7 +549,7 @@ def _write_prose(page_title: str, heading: str | None, facts: str) -> str | None
 
 # ---------- main entry point ----------
 
-def build_wiki(session: Session, repo_id: int, repo_name: str) -> dict:
+def build_wiki(session: Session, repo_id: int, repo_name: str, user_id: int | None = None) -> dict:
     syms = {s.id: s for s in session.scalars(select(Symbol).where(Symbol.repo_id == repo_id)).all()}
     code_files = session.scalars(
         select(File).where(File.repo_id == repo_id, File.category == "code")).all()
@@ -655,7 +657,7 @@ def build_wiki(session: Session, repo_id: int, repo_name: str) -> dict:
                  _focus_community(session, files_by_path, syms, repo_id, cluster))
 
     # ---- decide page order/titles: LLM first, deterministic fallback always available ----
-    decided = _decide_structure(repo_name, menu_desc)
+    decided = _decide_structure(repo_name, menu_desc, user_id)
     if decided is None:
         decided = [(k, titles_by_focus[k]) for k in DEFAULT_ORDER if k in sections_by_focus]
         decided += [(k, titles_by_focus[k]) for k in sections_by_focus if k not in dict(decided)]
@@ -672,7 +674,7 @@ def build_wiki(session: Session, repo_id: int, repo_name: str) -> dict:
     prose_map: dict[tuple[str, int], str | None] = {}
     if tasks and llm_available():
         with ThreadPoolExecutor(max_workers=6) as ex:
-            futs = {ex.submit(_write_prose, t[0], t[1], t[2]): i for i, t in enumerate(tasks)}
+            futs = {ex.submit(_write_prose, t[0], t[1], t[2], user_id): i for i, t in enumerate(tasks)}
             for fut in as_completed(futs):
                 i = futs[fut]
                 try:

@@ -86,11 +86,15 @@ def index_to_opensearch(embed: bool = True, repo_id: int | None = None) -> int:
     client = get_client()
     embedder = get_embedder() if embed else None
     dim = embedder.dim if embedder is not None else settings.embedding_dim
-    code_index.create_index(client, recreate=True, dim=dim)
     with session_scope() as session:
         repo = _pick_repo(session, repo_id)
         if repo is None:
             raise SystemExit("No repo ingested — run the Phase 1 ingestion first.")
+        # Only fully (re)creates the index on first use or a real dimension
+        # change — then wipes just THIS repo's old docs, not the whole shared
+        # index (that used to happen on every single ingest of any repo).
+        code_index.create_index(client, dim=dim)
+        code_index.delete_repo_docs(client, repo.id)
         q = select(Symbol).where(Symbol.repo_id == repo.id)
         syms = session.scalars(q).all()
         docs = [
@@ -152,9 +156,11 @@ def main() -> None:
 
         client = get_client()
         embedder = get_embedder()
+        with session_scope() as session:
+            repo_id = _pick_repo(session, None).id
         mode = "hybrid (BM25 + vector, RRF)" if embedder else "BM25 only"
         print(f"\n=== {mode}: {args.query!r} ===")
-        for hit in hybrid_search(client, embedder, args.query, k=args.k):
+        for hit in hybrid_search(client, embedder, args.query, k=args.k, repo_id=repo_id):
             loc = f"{hit['file_path']}:{hit['start_line']}"
             print(f"  {hit['score']:.4f}  [{hit['kind']:8}] {hit['qualified_name']:40.40} {loc}")
 

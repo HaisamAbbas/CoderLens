@@ -55,6 +55,21 @@
 }
 .export-link:hover { border-color: var(--accent); color: var(--accent); }
 
+.user-chip {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--card-border);
+}
+.user-avatar { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; }
+.user-name {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.user-signout {
+  background: none; border: none; color: var(--text-3); font-size: 11px; cursor: pointer;
+  padding: 2px 4px; flex-shrink: 0; transition: color 0.12s;
+}
+.user-signout:hover { color: var(--accent); }
+
 /* ---- Search page ---- */
 .search-page .ask-box input {
   width: 100%; box-sizing: border-box; font-size: 14.5px; padding: 12px 14px;

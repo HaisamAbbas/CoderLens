@@ -29,6 +29,7 @@ import "./styles/material.css";
 
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { AuthProvider } from "./lib/AuthContext";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 60_000, refetchOnWindowFocus: false, retry: 1 } },
@@ -39,7 +40,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
-          <App />
+          <AuthProvider>
+            <App />
+          </AuthProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </ErrorBoundary>

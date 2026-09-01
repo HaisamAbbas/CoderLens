@@ -1,3 +1,7 @@
+export interface User {
+  id: number; github_login: string; email: string | null; avatar_url: string | null;
+}
+
 export interface Counts { files: number; symbols: number; commits: number; issues: number; edges: number; }
 export interface Repo {
   id: number; name: string; url: string; default_branch: string | null;
@@ -10,6 +14,15 @@ export interface Status {
   confluence?: { configured: boolean };
   jira?: { configured: boolean };
 }
+
+export interface ConfluenceIntegration {
+  configured: boolean; base_url: string; email: string; space_key: string; has_token: boolean;
+}
+export interface JiraIntegration {
+  configured: boolean; base_url: string; email: string; project_key: string;
+  issue_type: string; has_token: boolean;
+}
+export interface Integrations { confluence: ConfluenceIntegration; jira: JiraIntegration; }
 
 export interface ConfluenceResult {
   key: string; title: string; status: "ok" | "error"; url?: string; error?: string;
@@ -34,12 +47,25 @@ export interface ArchSubChange {
   file_count_before: number; file_count_after: number;
 }
 export interface ArchCounts { code_files: number; submodules: number }
+export interface ArchSubmodule { submodule: string; files: string[]; weight: number }
+/** The mechanical skeleton at one ref — see analysis/architecture.py's
+ *  shape_from_paths, which both the live and historical views go through. */
+export interface ArchShape {
+  package: string;
+  submodules: ArchSubmodule[];
+  counts: ArchCounts;
+}
 /** Facts read off two git trees — never an inference about whether a change was
  *  good, risky or intentional. See analysis/arch_delta.py. */
 export interface ArchDelta {
   base: { ref: string; sha: string; date: string; subject: string };
   head: { ref: string; sha: string; date: string; subject: string };
-  before: { package: string }; after: { package: string };
+  before: ArchShape; after: ArchShape;
+  /** Module -> module dependencies aggregated from the symbol graph. They
+   *  describe the INGESTED commit, not necessarily the head being compared —
+   *  `edges_live` says whether those are the same. */
+  module_edges: { source: string; target: string; weight: number }[];
+  edges_live: boolean;
   mermaid: string | null;
   delta: {
     package: { before: string; after: string } | null;

@@ -41,7 +41,11 @@ def build_evidence_index(embed: bool = True, repo_id: int | None = None) -> int:
         by_stream[d["stream"]] = by_stream.get(d["stream"], 0) + 1
     print(f"[1/2] Built {len(docs)} evidence docs: {by_stream}")
 
-    evidence_index.create_index(client, recreate=True, dim=dim)
+    # Only fully (re)creates the index on first use or a real dimension
+    # change, then wipes just THIS repo's old docs — not the whole shared
+    # index (that used to happen on every single ingest of any repo).
+    evidence_index.create_index(client, dim=dim)
+    evidence_index.delete_repo_docs(client, repo.id)
     if embedder is not None:
         print(f"      embedding {len(docs)} docs ({settings.embedding_provider}, dim={dim}) ...")
         vectors = embedder.embed_documents([_embed_text(d) for d in docs])
@@ -69,8 +73,10 @@ def main() -> None:
 
         client = get_client()
         embedder = get_embedder()
+        with session_scope() as session:
+            repo_id = session.scalar(select(Repo).order_by(Repo.id.desc())).id
         print(f"\n=== cross-stream search: {args.query!r} ===")
-        for hit in search_all(client, embedder, args.query, k=args.k):
+        for hit in search_all(client, embedder, args.query, k=args.k, repo_id=repo_id):
             print(f"  {hit['score']:.4f}  [{hit['stream']:6}] {hit['citation']:24.24} {hit['title'][:48]}")
 
 

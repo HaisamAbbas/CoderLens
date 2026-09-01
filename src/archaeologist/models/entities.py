@@ -24,11 +24,35 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from archaeologist.models.base import Base
 
 
-class Repo(Base):
-    __tablename__ = "repos"
+class User(Base):
+    """A signed-in person, identified by their GitHub account (Phase 1 of the
+    multi-user migration — see the plan for the full phase sequence). Nothing
+    else in the schema references this yet; `Repo.user_id` (Phase 2) is what
+    actually turns this into data isolation."""
+
+    __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    url: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    github_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    github_login: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(300))
+    avatar_url: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class Repo(Base):
+    __tablename__ = "repos"
+    # Was `url` unique=True — a single global repo table with no owner. Now
+    # scoped per-user so two different users can each independently ingest
+    # the same public URL (e.g. both exploring pallets/flask) without
+    # colliding on one shared row.
+    __table_args__ = (UniqueConstraint("user_id", "url", name="uq_repo_user_url"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    url: Mapped[str] = mapped_column(String(500), index=True)
     name: Mapped[str] = mapped_column(String(200))
     default_branch: Mapped[str | None] = mapped_column(String(200))
     head_sha: Mapped[str | None] = mapped_column(String(40))
@@ -196,6 +220,9 @@ class IngestJob(Base):
     __tablename__ = "ingest_jobs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # No repo_id — a Repo row doesn't exist yet when this job starts. user_id
+    # is the only ownership anchor available until the ingest completes.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     repo_url: Mapped[str] = mapped_column(String(500), index=True)
     status: Mapped[str] = mapped_column(String(20), default="running", index=True)  # running | done | error
     step: Mapped[str] = mapped_column(String(50), default="")
@@ -293,6 +320,67 @@ class JiraTicketJob(Base):
     finding_ids: Mapped[list] = mapped_column(JSON)
     results: Mapped[list | None] = mapped_column(JSON)        # {finding_id, status, url|error}, appended live
     error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class UserIntegration(Base):
+    """One user's own Confluence/Jira credentials (Phase 4 of the multi-user
+    migration) — these used to be global CONFLUENCE_*/JIRA_* env vars shared
+    by everyone; now each user brings their own, so publishing/ticketing
+    lands in THEIR space/project, not an operator-configured shared one.
+
+    API tokens are stored encrypted (see security.py) — never in plaintext,
+    never sent back to the frontend once saved."""
+
+    __tablename__ = "user_integrations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+
+    confluence_base_url: Mapped[str] = mapped_column(String(500), default="")
+    confluence_email: Mapped[str] = mapped_column(String(300), default="")
+    confluence_api_token_encrypted: Mapped[str] = mapped_column(Text, default="")
+    confluence_space_key: Mapped[str] = mapped_column(String(50), default="")
+
+    jira_base_url: Mapped[str] = mapped_column(String(500), default="")
+    jira_email: Mapped[str] = mapped_column(String(300), default="")
+    jira_api_token_encrypted: Mapped[str] = mapped_column(Text, default="")
+    jira_project_key: Mapped[str] = mapped_column(String(50), default="")
+    jira_issue_type: Mapped[str] = mapped_column(String(50), default="Task")
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class UsageLedger(Base):
+    """Phase 5 of the multi-user migration: operator-facing visibility into
+    LLM/embedding cost, broken down per user. Deliberately NOT an enforcement
+    mechanism — there is no per-user cap and nothing here ever blocks or
+    slows a request; it's purely `SUM(cost_usd) GROUP BY user_id` material
+    for the operator to query later (LLM/embedding cost is the operator's
+    to fund, not the client's — see TRACKING.md).
+
+    Token counts are estimated from character length, not the provider's
+    real reported usage (see services/usage.py) — `estimated` is always
+    True today, kept as a column so a future real-usage-extraction change
+    doesn't need a migration."""
+
+    __tablename__ = "usage_ledger"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10), index=True)  # "llm" | "embedding"
+    provider: Mapped[str] = mapped_column(String(20))
+    model: Mapped[str] = mapped_column(String(100))
+    label: Mapped[str] = mapped_column(String(50), default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated: Mapped[bool] = mapped_column(Boolean, default=True)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )

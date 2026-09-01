@@ -60,11 +60,22 @@ def list_refs(repo: git.Repo, limit: int = 40) -> dict:
         })
     tags.sort(key=lambda t: t["date"], reverse=True)
 
+    # Sampled across the repo's whole life, not just the newest `limit` commits.
+    # A dense recent window is the wrong list for this feature: any two adjacent
+    # commits are almost always structurally identical, so a picker offering
+    # only the last few days can only produce "nothing changed". Taking every
+    # nth commit spans the full history at the same list length, so the default
+    # pair is far enough apart for structure to have actually moved.
+    all_commits = list(repo.iter_commits())
+    step = max(1, len(all_commits) // limit) if limit else 1
+    sampled = all_commits[::step][:limit]
+    if all_commits and all_commits[-1] not in sampled:
+        sampled.append(all_commits[-1])   # always offer the repo's first commit
     commits = [{
         "ref": c.hexsha, "kind": "commit", "sha": c.hexsha[:12],
         "date": c.committed_datetime.isoformat(),
         "subject": (c.message or "").strip().splitlines()[0][:120],
-    } for c in repo.iter_commits(max_count=limit)]
+    } for c in sampled]
 
     return {"tags": tags, "commits": commits, "head": repo.head.commit.hexsha[:12]}
 
@@ -285,6 +296,51 @@ def mermaid_delta(delta: dict, before: dict, after: dict) -> str | None:
         "  classDef kept fill:#f1f5f9,stroke:#94a3b8,color:#334155;",
     ]
     return "\n".join(lines)
+
+
+def module_edges(session, repo_id: int, shape: dict) -> list[dict]:
+    """Module -> module dependencies, aggregated up from the symbol graph.
+
+    Submodules on their own are a bag of folders; what makes an architecture
+    diagram an architecture diagram is the arrows. Those exist already, one
+    level down: SymbolEdge resolves call/inherit edges between symbols, and
+    every symbol has a file, and every file belongs to a submodule.
+
+    Caveat the caller must surface: these edges describe the *ingested* commit,
+    since symbol extraction only ever ran there. They are the architecture's
+    current wiring drawn under whatever the delta says changed — not the wiring
+    as it stood at some historical ref. Rebuilding them for an arbitrary commit
+    would mean re-parsing two whole trees.
+    """
+    from sqlalchemy import select as _select
+
+    from archaeologist.models.entities import Symbol, SymbolEdge
+
+    sub_of: dict[str, str] = {}
+    for s in shape["submodules"]:
+        for path in s["files"]:
+            sub_of[path] = s["submodule"]
+    if not sub_of:
+        return []
+
+    file_of = dict(session.execute(
+        _select(Symbol.id, Symbol.file_path).where(Symbol.repo_id == repo_id)
+    ).all())
+
+    weights: dict[tuple[str, str], int] = {}
+    rows = session.execute(
+        _select(SymbolEdge.src_symbol_id, SymbolEdge.dst_symbol_id)
+        .where(SymbolEdge.repo_id == repo_id, SymbolEdge.dst_symbol_id.is_not(None))
+    ).all()
+    for src_id, dst_id in rows:
+        a = sub_of.get(file_of.get(src_id, ""))
+        b = sub_of.get(file_of.get(dst_id, ""))
+        if a and b and a != b:            # self-edges say nothing at this zoom
+            weights[(a, b)] = weights.get((a, b), 0) + 1
+
+    edges = [{"source": a, "target": b, "weight": w} for (a, b), w in weights.items()]
+    edges.sort(key=lambda e: (-e["weight"], e["source"], e["target"]))
+    return edges
 
 
 def build_delta(repo_path: str | Path, base: str, head: str) -> dict:

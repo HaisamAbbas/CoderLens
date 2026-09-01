@@ -21,16 +21,17 @@ class RagResult:
     evidence: list[dict] = field(default_factory=list)
 
 
-def retrieve(question: str, k: int = 8, streams: list[str] | None = None) -> list[dict]:
+def retrieve(question: str, repo_id: int, k: int = 8, streams: list[str] | None = None) -> list[dict]:
     client = get_client()
     embedder = get_embedder()
-    return search_all(client, embedder, question, k=k, streams=streams)
+    return search_all(client, embedder, question, repo_id, k=k, streams=streams)
 
 
 def answer_question(
-    question: str, k: int = 8, streams: list[str] | None = None, max_tokens: int = 1024
+    question: str, repo_id: int, user_id: int, k: int = 8,
+    streams: list[str] | None = None, max_tokens: int = 1024,
 ) -> RagResult:
-    evidence = retrieve(question, k=k, streams=streams)
+    evidence = retrieve(question, repo_id, k=k, streams=streams)
     if not evidence:
         return RagResult(question, "No evidence found in the indexed repository.", [])
 
@@ -40,5 +41,5 @@ def answer_question(
         return RagResult(question, prompts.build_digest(question, evidence), evidence)
 
     prompt = prompts.build_prompt(question, evidence)
-    answer = call_llm(prompts.SYSTEM, prompt, max_tokens=max_tokens)
+    answer = call_llm(prompts.SYSTEM, prompt, max_tokens=max_tokens, label="ask", user_id=user_id)
     return RagResult(question, answer, evidence)

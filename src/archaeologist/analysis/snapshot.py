@@ -24,7 +24,7 @@ def _count(session: Session, model, repo_id: int) -> int:
     return session.scalar(select(func.count()).select_from(model).where(model.repo_id == repo_id)) or 0
 
 
-def build_snapshot(session: Session, repo_id: int, repo_name: str) -> dict:
+def build_snapshot(session: Session, repo_id: int, repo_name: str, user_id: int | None = None) -> dict:
     counts = {
         "files": _count(session, File, repo_id), "symbols": _count(session, Symbol, repo_id),
         "commits": _count(session, Commit, repo_id), "issues": _count(session, Issue, repo_id),
@@ -38,6 +38,6 @@ def build_snapshot(session: Session, repo_id: int, repo_name: str) -> dict:
         "dead_code": find_dead_code(session, repo_id),
         "communities": find_communities(session, repo_id),
         "coupling": find_change_coupling(session, repo_id),
-        "wiki": build_wiki(session, repo_id, repo_name),
+        "wiki": build_wiki(session, repo_id, repo_name, user_id),
         "graph": export_file_graph(session, repo_id, exclude_tests=True),
     }

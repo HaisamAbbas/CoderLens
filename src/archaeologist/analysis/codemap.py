@@ -70,7 +70,7 @@ Return ONLY JSON: {{"cards": [{{"concept": "...", "icon": "...", "explainer": ".
 — "cards" MUST have exactly one entry per symbol, in the same order given."""
 
 
-def _concept_cards(ordered_syms: list[Symbol]) -> list[dict] | None:
+def _concept_cards(ordered_syms: list[Symbol], user_id: int | None = None) -> list[dict] | None:
     """One concept card per symbol, in order, or None if the LLM is unavailable
     or its response can't be trusted — callers fall back to `classify_role`."""
     if not llm_available() or not ordered_syms:
@@ -82,7 +82,8 @@ def _concept_cards(ordered_syms: list[Symbol]) -> list[dict] | None:
                      + (f" — docstring: {doc}" if doc else ""))
     user = "Ordered walkthrough symbols:\n" + "\n".join(lines)
     try:
-        data = parse_llm_json(call_llm(CONCEPT_SYS, user, max_tokens=900, temperature=0.3, label="codemap-concepts"))
+        data = parse_llm_json(call_llm(CONCEPT_SYS, user, max_tokens=900, temperature=0.3,
+                                       label="codemap-concepts", user_id=user_id))
     except Exception:
         return None
     cards = data.get("cards")
@@ -100,10 +101,10 @@ def _concept_cards(ordered_syms: list[Symbol]) -> list[dict] | None:
     return out
 
 
-def _candidate_ids(session, question, client, embedder, k=10) -> list[int]:
-    lists = [code_index.bm25_hits(client, question, 15)]
+def _candidate_ids(session, question, client, embedder, repo_id, k=10) -> list[int]:
+    lists = [code_index.bm25_hits(client, question, 15, repo_id)]
     if embedder is not None:
-        lists.append(code_index.knn_hits(client, embedder.embed_query(question), 15))
+        lists.append(code_index.knn_hits(client, embedder.embed_query(question), 15, repo_id))
     ids: list[int] = []
     for _id, _score, _src in rrf(lists):
         try:
@@ -169,7 +170,7 @@ def _node(s: Symbol, step: int, note: str, card: dict | None = None) -> dict:
     return n
 
 
-def build_codemap(question: str, max_nodes: int = 22) -> dict:
+def build_codemap(question: str, repo_id: int, user_id: int | None = None, max_nodes: int = 22) -> dict:
     client = get_client()
     embedder = get_embedder()
     empty = {"question": question, "title": "", "narrative": "", "nodes": [], "edges": [],
@@ -183,13 +184,12 @@ def build_codemap(question: str, max_nodes: int = 22) -> dict:
     # waiting on the same pool. Nothing after this block issues a new query —
     # it's pure Python over already-loaded Symbol objects.
     with session_scope() as session:
-        cand_ids = _candidate_ids(session, question, client, embedder)
+        cand_ids = _candidate_ids(session, question, client, embedder, repo_id)
         if not cand_ids:
             return {**empty, "title": "No matching code"}
 
         cands = {s.id: s for s in session.scalars(select(Symbol).where(Symbol.id.in_(cand_ids)))}
         ordered = [cands[i] for i in cand_ids if i in cands]
-        repo_id = ordered[0].repo_id
 
         # real edges touching the candidates (+ discover 1-hop neighbors)
         rows = session.execute(
@@ -219,7 +219,7 @@ def build_codemap(question: str, max_nodes: int = 22) -> dict:
                     for e in edges if e["source"] in id2idx and e["target"] in id2idx]
         user = f"QUESTION: {question}\n\nCANDIDATES:\n" + "\n".join(lines) + "\n\nEDGES: " + ", ".join(edge_txt)
         try:
-            data = parse_llm_json(call_llm(CURATE_SYS, user, max_tokens=700, label="codemap"))
+            data = parse_llm_json(call_llm(CURATE_SYS, user, max_tokens=700, label="codemap", user_id=user_id))
             title, narrative = data.get("title", ""), data.get("narrative", "")
             selected: set[int] = set()
             for k in data.get("keep", []):
@@ -242,7 +242,7 @@ def build_codemap(question: str, max_nodes: int = 22) -> dict:
     # Final walkthrough order, decided first — concept cards are generated for
     # THIS exact order so the LLM sees (and narrates) the real step sequence.
     final_syms = sorted(syms.values(), key=lambda s: (step_by.get(s.id, 1), s.qualified_name))
-    cards = _concept_cards(final_syms)
+    cards = _concept_cards(final_syms, user_id)
     card_by_id = {s.id: c for s, c in zip(final_syms, cards)} if cards else {}
 
     nodes = [_node(s, step_by.get(s.id, 1), note_by.get(s.id, ""), card_by_id.get(s.id)) for s in final_syms]
@@ -347,7 +347,7 @@ def _snippet(session, sym: Symbol, max_lines: int = 40) -> str:
     return "\n".join(body)
 
 
-def explain_edge(source_id: int, target_id: int, question: str = "") -> dict:
+def explain_edge(source_id: int, target_id: int, question: str = "", user_id: int | None = None) -> dict:
     """Why does `source` call `target`? Grounded in the caller's real source
     (which contains the actual call) — degrades to a plain factual sentence
     (still 100% true, just not elaborated) when no LLM is available."""
@@ -367,13 +367,15 @@ def explain_edge(source_id: int, target_id: int, question: str = "") -> dict:
             + f"\nCaller's source code:\n{snippet}"
         )
     try:
-        text = call_llm(EXPLAIN_EDGE_SYS, user, max_tokens=200, label="codemap-explain-edge").strip()
+        text = call_llm(EXPLAIN_EDGE_SYS, user, max_tokens=200, label="codemap-explain-edge",
+                        user_id=user_id).strip()
         return {"text": text or fallback}
     except Exception:
         return {"text": fallback}
 
 
-def extend_codemap(question: str, existing_ids: list[int], max_new: int = 10) -> dict:
+def extend_codemap(question: str, existing_ids: list[int], repo_id: int,
+                   user_id: int | None = None, max_new: int = 10) -> dict:
     """Grow an existing codemap with a follow-up question — finds new, real
     symbols relevant to the follow-up and any real edges connecting them to
     what's already on the map, WITHOUT touching the existing nodes/edges."""
@@ -383,14 +385,14 @@ def extend_codemap(question: str, existing_ids: list[int], max_new: int = 10) ->
     existing = set(existing_ids)
 
     with session_scope() as session:
-        cand_ids = [i for i in _candidate_ids(session, question, client, embedder, k=max_new + 4) if i not in existing]
+        cand_ids = [i for i in _candidate_ids(session, question, client, embedder, repo_id, k=max_new + 4)
+                   if i not in existing]
         cand_ids = cand_ids[:max_new]
         if not cand_ids:
             return empty
         cands = {s.id: s for s in session.scalars(select(Symbol).where(Symbol.id.in_(cand_ids)))}
         if not cands:
             return empty
-        repo_id = next(iter(cands.values())).repo_id
 
         universe_seed = list(cands) + list(existing)
         rows = session.execute(
@@ -413,7 +415,7 @@ def extend_codemap(question: str, existing_ids: list[int], max_new: int = 10) ->
         lines = [f"{s.qualified_name} ({s.kind}) {s.file_path}:{s.start_line}" for s in syms.values()]
         user = f"Follow-up question: {question}\n\nNewly found symbols:\n" + "\n".join(lines)
         try:
-            note = call_llm(EXTEND_SYS, user, max_tokens=150, label="codemap-extend").strip()
+            note = call_llm(EXTEND_SYS, user, max_tokens=150, label="codemap-extend", user_id=user_id).strip()
         except Exception:
             note = ""
 

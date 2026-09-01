@@ -8,6 +8,10 @@ Job status is persisted in Postgres (the `ingest_jobs` table), not kept in an
 in-process dict — free-tier hosts restart the process on every redeploy and
 on any OOM, which used to silently orphan an in-flight job and leave the UI
 polling a job id that no longer existed anywhere.
+
+Every job is owned by a user (Phase 2 of the multi-user migration) — IngestJob
+has no repo_id (a Repo row doesn't exist yet when a job starts), so user_id is
+the only ownership anchor available until the ingest completes.
 """
 
 import threading
@@ -26,6 +30,7 @@ from archaeologist.models.entities import IngestJob, Repo
 def _serialize(job: IngestJob) -> dict:
     return {
         "id": job.id,
+        "user_id": job.user_id,
         "repo_url": job.repo_url,
         "status": job.status,
         "step": job.step,
@@ -41,19 +46,23 @@ def job_status(job_id: str) -> dict | None:
         return _serialize(job) if job is not None else None
 
 
-def list_jobs() -> list[dict]:
+def list_jobs(user_id: int) -> list[dict]:
     with session_scope() as session:
         jobs = session.scalars(
-            select(IngestJob).order_by(IngestJob.created_at.desc())
+            select(IngestJob).where(IngestJob.user_id == user_id)
+            .order_by(IngestJob.created_at.desc())
         ).all()
         return [_serialize(j) for j in jobs]
 
 
-def running_job_for(url: str) -> dict | None:
+def running_job_for(url: str, user_id: int) -> dict | None:
+    """Scoped by (url, user_id) — two different users each starting an
+    ingest of the same URL at once must never see each other's job."""
     with session_scope() as session:
         job = session.scalar(
             select(IngestJob)
-            .where(IngestJob.repo_url == url, IngestJob.status == "running")
+            .where(IngestJob.repo_url == url, IngestJob.user_id == user_id,
+                   IngestJob.status == "running")
             .order_by(IngestJob.created_at.desc())
         )
         return _serialize(job) if job is not None else None
@@ -68,30 +77,32 @@ def _update(job_id: str, **fields) -> None:
             setattr(job, k, v)
 
 
-def start_ingest(repo_url: str, token: str = "") -> dict:
+def start_ingest(repo_url: str, user_id: int, token: str = "") -> dict:
     """Start a full ingest in a background thread. Returns the job.
 
-    If a job for the same repo is already running, returns it (idempotent).
+    If a job for the same repo is already running FOR THIS USER, returns it
+    (idempotent) — a different user's in-flight job for the same URL is a
+    separate job, not the same one.
     `token` is an optional GitHub PAT used transiently at clone time for
     private repos — deliberately NOT a persisted job field (no new column,
     never echoed back through any response).
     """
-    existing = running_job_for(repo_url)
+    existing = running_job_for(repo_url, user_id)
     if existing is not None:
         return existing
 
     job_id = uuid.uuid4().hex[:12]
     with session_scope() as session:
-        session.add(IngestJob(id=job_id, repo_url=repo_url))
+        session.add(IngestJob(id=job_id, user_id=user_id, repo_url=repo_url))
 
-    thread = threading.Thread(target=_run, args=(job_id, repo_url, token), daemon=True)
+    thread = threading.Thread(target=_run, args=(job_id, repo_url, user_id, token), daemon=True)
     thread.start()
     return job_status(job_id)
 
 
-def _run(job_id: str, repo_url: str, token: str = "") -> None:
+def _run(job_id: str, repo_url: str, user_id: int, token: str = "") -> None:
     try:
-        _pipeline(job_id, repo_url, token)
+        _pipeline(job_id, repo_url, user_id, token)
         _update(job_id, status="done", step="", message="Ingest complete")
     except Exception as exc:  # noqa: BLE001 - surface any failure on the job
         status = job_status(job_id)
@@ -99,7 +110,7 @@ def _run(job_id: str, repo_url: str, token: str = "") -> None:
         _update(job_id, status="error", step="", error=str(exc), message=f"Failed at step {step or 'start'}")
 
 
-def _pipeline(job_id: str, repo_url: str, token: str = "") -> None:
+def _pipeline(job_id: str, repo_url: str, user_id: int, token: str = "") -> None:
     # --- 1. Clone + walk the five streams into Postgres ---
     _update(job_id, step="clone", message=f"Cloning and walking {repo_url} …")
     # Web-triggered ingests cap git history at the 2,000 most recent commits:
@@ -107,7 +118,7 @@ def _pipeline(job_id: str, repo_url: str, token: str = "") -> None:
     # commits) an uncapped walk looks hung for 30+ minutes. 2,000 keeps the
     # churn/coupling/hotspot signals fully populated; `None` (all history)
     # remains available to the CLI caller.
-    stats = ingest_repository(repo_url=repo_url, token=token, max_commits=2000)
+    stats = ingest_repository(repo_url=repo_url, user_id=user_id, token=token, max_commits=2000)
     job_stats = {
         "files": stats.files, "commits": stats.commits,
         "issues": stats.issues, "prs": stats.prs,
@@ -115,8 +126,12 @@ def _pipeline(job_id: str, repo_url: str, token: str = "") -> None:
     _update(job_id, stats=job_stats)
 
     with session_scope() as session:
+        # Scoped by (url, user_id) — Repo.url is no longer globally unique,
+        # so an unscoped lookup could attach this job's later steps (symbol
+        # extraction, indexing) to a DIFFERENT user's repo with the same URL.
         repo = session.scalar(
-            select(Repo).where(Repo.url == repo_url).order_by(Repo.id.desc())
+            select(Repo).where(Repo.url == repo_url, Repo.user_id == user_id)
+            .order_by(Repo.id.desc())
         )
         if repo is None:
             raise RuntimeError("Ingestion finished but no repo row was created")

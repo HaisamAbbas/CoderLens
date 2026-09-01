@@ -13,7 +13,7 @@ from sqlalchemy import select
 from archaeologist.ingestion.repository import repo_slug
 from archaeologist.models.db import session_scope
 from archaeologist.models.entities import ConfluencePublishJob, Repo
-from archaeologist.services import confluence_publish
+from archaeologist.services import confluence_publish, user_integrations
 
 
 def _serialize(job: ConfluencePublishJob) -> dict:
@@ -91,6 +91,10 @@ def _publish(job_id: str, repo_id: int, section_keys: list[str]) -> None:
             raise RuntimeError("Unknown repository for publish job")
         if not r.wiki_cache:
             raise RuntimeError("No cached wiki — generate it (visit Start Here) first.")
+        integ = user_integrations.get(session, r.user_id)
+        if not user_integrations.confluence_configured(integ):
+            raise RuntimeError("Confluence is not connected — set it up in Settings.")
+        credentials = user_integrations.confluence_credentials(integ)
         # owner/name (not Repo.name, which is the bare name only) so two repos
         # with the same bare name can't collide on Confluence page titles.
         owner, name = repo_slug(r.url)
@@ -101,6 +105,6 @@ def _publish(job_id: str, repo_id: int, section_keys: list[str]) -> None:
         _update(job_id, results=results_so_far)
 
     outcome = confluence_publish.publish_wiki(
-        label, wiki, section_keys, on_progress=on_progress
+        label, wiki, section_keys, credentials, on_progress=on_progress
     )
     _update(job_id, parent_url=outcome["parent_url"], results=outcome["results"])

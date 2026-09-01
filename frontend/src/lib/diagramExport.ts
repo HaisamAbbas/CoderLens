@@ -93,6 +93,43 @@ function loadImage(svg: string): Promise<HTMLImageElement> {
   });
 }
 
+/* ---- Exporting an SVG we drew ourselves (ArchDiagram) ------------------
+ * These take a live <svg> node instead of Mermaid source. Nothing needs
+ * re-rendering here: the renderer paints with literal colour attributes rather
+ * than CSS classes precisely so the serialized markup stands alone, with no
+ * stylesheet to carry along and no foreignObject to defeat the canvas.       */
+
+function serialize(node: SVGSVGElement): { svg: string; w: number; h: number } {
+  const clone = node.cloneNode(true) as SVGSVGElement;
+  const vb = (clone.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+  const w = vb.length === 4 ? vb[2] : node.clientWidth || 960;
+  const h = vb.length === 4 ? vb[3] : node.clientHeight || 540;
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  return { svg: new XMLSerializer().serializeToString(clone), w, h };
+}
+
+export function downloadSvgElement(node: SVGSVGElement, filename: string, bg: string): void {
+  const { svg, w, h } = serialize(node);
+  saveBlob(new Blob([prepareSvg(svg, w, h, bg)], { type: "image/svg+xml;charset=utf-8" }),
+           `${filename}.svg`);
+}
+
+export async function downloadPngElement(
+  node: SVGSVGElement, filename: string, bg: string, scale = 2,
+): Promise<void> {
+  const { svg, w, h } = serialize(node);
+  const img = await loadImage(prepareSvg(svg, w, h, bg));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(w * scale);
+  canvas.height = Math.round(h * scale);
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  await new Promise<void>((resolve) =>
+    canvas.toBlob((b) => { if (b) saveBlob(b, `${filename}.png`); resolve(); }, "image/png"));
+}
+
 export async function downloadSvg(chart: string, filename: string): Promise<void> {
   const raw = await renderForExport(chart);
   const { w, h } = svgSize(raw);

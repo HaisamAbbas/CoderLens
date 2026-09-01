@@ -25,10 +25,11 @@ def main() -> None:
         repo = session.scalar(select(Repo))
         if repo is None:
             raise SystemExit("No repo ingested.")
-        instances = build_localization_set(session, repo.id, limit=args.limit, max_files=args.max_files)
+        repo_id = repo.id
+        instances = build_localization_set(session, repo_id, limit=args.limit, max_files=args.max_files)
 
     print(f"Built {len(instances)} localization instances (commit subject -> changed src files).\n")
-    rows = localization.evaluate(instances)
+    rows = localization.evaluate(instances, repo_id)
     agg = localization.aggregate(rows)
 
     print("=== Aggregate (retrieval-based localization) ===")

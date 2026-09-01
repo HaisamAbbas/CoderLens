@@ -172,7 +172,7 @@ def _is_truncation_artifact(finding: dict, sent_lines: int) -> bool:
     return finding["start_line"] >= sent_lines - 5
 
 
-def _scan_file(file: File) -> tuple[list[dict], int, str | None]:
+def _scan_file(file: File, user_id: int | None = None) -> tuple[list[dict], int, str | None]:
     """Returns (kept findings, number dropped as truncation artifacts, failure)
     so the caller can disclose both rather than silently swallow them.
 
@@ -199,7 +199,7 @@ def _scan_file(file: File) -> tuple[list[dict], int, str | None]:
     user = f"File: {file.path}\n\n```{_lang_of(file.path)}\n{body}\n```{trunc_note}"
     try:
         raw = call_llm(WEAKNESS_SYS, user, max_tokens=1500, temperature=0.1,
-                       label="weakness-scan")
+                       label="weakness-scan", user_id=user_id)
         data = parse_llm_json(raw)
     except Exception as exc:  # noqa: BLE001 - one file's failure never sinks the scan
         return [], 0, str(exc).strip()[:200] or exc.__class__.__name__
@@ -243,6 +243,7 @@ def _cap_notes(files: list[File], total_code: int, scan_all: bool) -> list[str]:
 
 def scan_files(files: list[File], total_code: int, scan_all: bool,
                on_progress: Callable[[int, int], None] | None = None,
+               user_id: int | None = None,
               ) -> tuple[list[dict], list[str]]:
     """Fan the selected files out concurrently (same shape as wiki.py's
     per-section prose fan-out). No DB session involved — safe to run for
@@ -254,7 +255,7 @@ def scan_files(files: list[File], total_code: int, scan_all: bool,
     failed = 0
     first_failure = ""
     with ThreadPoolExecutor(max_workers=6) as pool:
-        futures = [pool.submit(_scan_file, f) for f in files]
+        futures = [pool.submit(_scan_file, f, user_id) for f in files]
         for future in as_completed(futures):
             try:
                 file_findings, dropped, failure = future.result()

@@ -313,7 +313,7 @@ def _salvage_json(raw: str) -> dict | None:
     return {"scenario": scen, "steps": steps} if steps else None
 
 
-def simulate_flow(node_ids: list[int], question: str = "") -> dict:
+def simulate_flow(node_ids: list[int], question: str = "", user_id: int | None = None) -> dict:
     """Generate an illustrative execution trace for an ordered walkthrough.
 
     Returns:
@@ -349,7 +349,8 @@ def simulate_flow(node_ids: list[int], question: str = "") -> dict:
             try:
                 sys = SIM_SYS + ("\n\nIMPORTANT: your previous reply was cut off or invalid — be MORE "
                                  "concise so the whole JSON fits, one step per symbol." if attempt else "")
-                raw = call_llm(sys, user, max_tokens=max_tokens, temperature=0.4, label="codemap-simulate")
+                raw = call_llm(sys, user, max_tokens=max_tokens, temperature=0.4,
+                               label="codemap-simulate", user_id=user_id)
                 data = parse_llm_json(raw)
                 if not data:
                     data = _salvage_json(raw)  # truncated reply → keep the complete steps

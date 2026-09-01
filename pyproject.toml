@@ -16,6 +16,14 @@ dependencies = [
     "sqlalchemy>=2.0",
     "opensearch-py>=2.7",
     "redis>=5.2",
+    # Auth (Phase 1 of the multi-user migration): signs the session cookie
+    # for Starlette's SessionMiddleware — NOT bundled with FastAPI/Starlette
+    # by default despite SessionMiddleware requiring it (confirmed: importing
+    # it raises ModuleNotFoundError without this explicit dependency).
+    "itsdangerous>=2.2",
+    # Encrypts per-user Confluence/Jira credentials at rest (Phase 4 of the
+    # multi-user migration) — see security.py.
+    "cryptography>=42",
     # LLM (reasoning / agent) — pluggable provider.
     "google-genai>=1.0",      # Gemini (default)
     "anthropic>=0.40",        # Claude (optional)
