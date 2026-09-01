@@ -354,3 +354,33 @@ class UserIntegration(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class UsageLedger(Base):
+    """Phase 5 of the multi-user migration: operator-facing visibility into
+    LLM/embedding cost, broken down per user. Deliberately NOT an enforcement
+    mechanism — there is no per-user cap and nothing here ever blocks or
+    slows a request; it's purely `SUM(cost_usd) GROUP BY user_id` material
+    for the operator to query later (LLM/embedding cost is the operator's
+    to fund, not the client's — see TRACKING.md).
+
+    Token counts are estimated from character length, not the provider's
+    real reported usage (see services/usage.py) — `estimated` is always
+    True today, kept as a column so a future real-usage-extraction change
+    doesn't need a migration."""
+
+    __tablename__ = "usage_ledger"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10), index=True)  # "llm" | "embedding"
+    provider: Mapped[str] = mapped_column(String(20))
+    model: Mapped[str] = mapped_column(String(100))
+    label: Mapped[str] = mapped_column(String(50), default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated: Mapped[bool] = mapped_column(Boolean, default=True)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )

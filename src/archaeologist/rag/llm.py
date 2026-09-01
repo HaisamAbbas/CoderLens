@@ -101,8 +101,9 @@ def active_model() -> str:
 
 
 def call_llm(system: str, user: str, max_tokens: int = 1024, temperature: float = 0.0,
-             label: str = "") -> str:
+             label: str = "", user_id: int | None = None) -> str:
     from archaeologist import telemetry
+    from archaeologist.services import usage
 
     provider = resolve_provider()
     if provider is None:
@@ -128,6 +129,7 @@ def call_llm(system: str, user: str, max_tokens: int = 1024, temperature: float 
         else:  # pragma: no cover - resolve_provider guards this
             raise RuntimeError(f"Unknown llm provider: {provider!r}")
     telemetry.record_llm(provider, active_model(), t.ms, len(system) + len(user), len(out), label)
+    usage.record(user_id, "llm", provider, active_model(), label, len(system) + len(user), len(out))
     return out
 
 
@@ -376,7 +378,7 @@ def _call_zai(system: str, user: str, max_tokens: int, temperature: float) -> st
 
 
 def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature: float = 0.0,
-                     label: str = ""):
+                     label: str = "", user_id: int | None = None):
     """Like `call_llm`, but yields text deltas as they arrive instead of
     returning one blocking string. True token streaming is implemented for the
     OpenAI-compatible providers (alibaba, aihubmix, zai, openrouter) and ollama;
@@ -384,6 +386,7 @@ def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature:
     answer (a correct, if non-incremental, degradation — callers just see one
     big delta instead of many small ones)."""
     from archaeologist import telemetry
+    from archaeologist.services import usage
 
     provider = resolve_provider()
     if provider is None:
@@ -425,6 +428,9 @@ def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature:
         else:
             # gemini / anthropic: no streaming client wired up yet — yield the
             # whole answer as one chunk so callers still get a correct result.
+            # user_id=None here deliberately: this whole function records usage
+            # once at the bottom, for every path — the inner call must not also
+            # record, or this fallback path would double-count the cost.
             text = call_llm(system, user, max_tokens, temperature, label=label)
             out_len = len(text)
             yield text
@@ -434,6 +440,7 @@ def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature:
                 out_len += len(chunk)
                 yield chunk
     telemetry.record_llm(provider, active_model(), t.ms, len(system) + len(user), out_len, label)
+    usage.record(user_id, "llm", provider, active_model(), label, len(system) + len(user), out_len)
 
 
 def _stream_openai_compat(url: str, headers: dict, model: str, system: str, user: str,

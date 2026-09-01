@@ -25,6 +25,7 @@ def no_llm(monkeypatch):
 def _state(**kw) -> InvestigationState:
     base: InvestigationState = {
         "question": "Why does Flask use an application context?",
+        "repo_id": 1, "user_id": 1,
         "queries": [], "graph_targets": [], "streams": None, "evidence": [],
         "iterations": 0, "max_iterations": 2, "sufficient": False,
         "missing": "", "answer": "", "trace": [],

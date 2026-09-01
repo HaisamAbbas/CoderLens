@@ -28,7 +28,7 @@ class CodemapBody(BaseModel):
 def codemap(body: CodemapBody, user: User = CurrentUser) -> dict:
     with session_scope() as s:
         repo_id = _repo(s, user).id
-    result = build_codemap(body.question, repo_id, max_nodes=body.max_nodes)
+    result = build_codemap(body.question, repo_id, user.id, max_nodes=body.max_nodes)
     if result.get("nodes"):
         with session_scope() as s:
             save_conversation(s, repo_id, "codemap", body.question, result)
@@ -66,7 +66,7 @@ def codemap_explain_edge(body: ExplainEdgeBody, user: User = CurrentUser) -> dic
     with session_scope() as s:
         _check_owned(s, user, body.source_id)
         _check_owned(s, user, body.target_id)
-    return explain_edge(body.source_id, body.target_id, body.question)
+    return explain_edge(body.source_id, body.target_id, body.question, user_id=user.id)
 
 
 class ExtendCodemapBody(BaseModel):
@@ -83,7 +83,7 @@ def codemap_extend(body: ExtendCodemapBody, user: User = CurrentUser) -> dict:
         # The existing map's own repo — every id above is already verified to
         # belong to it, so this is the correct scope for the new candidates too.
         repo_id = _repo(s, user).id
-    return extend_codemap(body.question, body.existing_ids, repo_id, max_new=body.max_new)
+    return extend_codemap(body.question, body.existing_ids, repo_id, user.id, max_new=body.max_new)
 
 
 class SimulateBody(BaseModel):
@@ -102,4 +102,4 @@ def codemap_simulate(body: SimulateBody, user: User = CurrentUser) -> dict:
     with session_scope() as s:
         for node_id in body.node_ids:
             _check_owned(s, user, node_id)
-    return simulate_flow(body.node_ids, body.question)
+    return simulate_flow(body.node_ids, body.question, user_id=user.id)

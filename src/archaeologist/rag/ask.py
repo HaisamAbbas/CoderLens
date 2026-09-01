@@ -28,9 +28,9 @@ def main() -> None:
                 else session.scalar(select(Repo).order_by(Repo.id.desc())))
         if repo is None:
             raise SystemExit("No repo ingested — run ingestion first.")
-        repo_id = repo.id
+        repo_id, user_id = repo.id, repo.user_id
 
-    result = answer_question(args.question, repo_id, k=args.k, streams=args.streams)
+    result = answer_question(args.question, repo_id, user_id, k=args.k, streams=args.streams)
 
     print(f"Q: {result.question}\n")
     print("EVIDENCE:")

@@ -534,7 +534,7 @@ def wiki(refresh: bool = False, user: User = CurrentUser) -> dict:
         r = _repo(s, user)
         if not refresh and r.wiki_cache_sha == r.head_sha and r.wiki_cache:
             return r.wiki_cache
-        result = build_wiki(s, r.id, r.name)
+        result = build_wiki(s, r.id, r.name, user.id)
         r.wiki_cache = result
         r.wiki_cache_sha = r.head_sha
         return result
@@ -612,7 +612,7 @@ def export_snapshot_html(user: User = CurrentUser) -> HTMLResponse:
     from archaeologist.viz.snapshot_html import render_snapshot_html
     with session_scope() as s:
         r = _repo(s, user)
-        snapshot = build_snapshot(s, r.id, r.name)
+        snapshot = build_snapshot(s, r.id, r.name, user.id)
     html = render_snapshot_html(snapshot, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
     headers = {"Content-Disposition": f'attachment; filename="{snapshot["repo"]}-snapshot.html"'}
     return HTMLResponse(content=html, headers=headers)
@@ -641,7 +641,7 @@ def ask(body: AskBody, user: User = CurrentUser) -> dict:
         repo_id = _repo(s, user).id
     from archaeologist.rag.pipeline import answer_question
     try:
-        res = answer_question(body.question, repo_id, k=body.k, streams=body.streams)
+        res = answer_question(body.question, repo_id, user.id, k=body.k, streams=body.streams)
     except Exception as exc:  # noqa: BLE001 - surface a structured error to the UI
         raise HTTPException(500, f"The LLM call failed: {exc}") from exc
     return {"question": res.question, "answer": res.answer, "evidence": res.evidence}
@@ -665,7 +665,7 @@ def investigate(body: InvestigateBody, user: User = CurrentUser) -> dict:
         repo_id = _repo(s, user).id
     from archaeologist.agent.graph import investigate as run
     try:
-        r = run(body.question, repo_id, max_iterations=body.max_iterations,
+        r = run(body.question, repo_id, user.id, max_iterations=body.max_iterations,
                 history=[h.model_dump() for h in body.history], simple=body.simple)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"The investigation failed: {exc}") from exc
@@ -687,7 +687,7 @@ def investigate_stream_endpoint(body: InvestigateBody, user: User = CurrentUser)
 
     def gen():
         answer, evidence, trace = "", [], []
-        for event in investigate_stream(body.question, repo_id, max_iterations=body.max_iterations,
+        for event in investigate_stream(body.question, repo_id, user.id, max_iterations=body.max_iterations,
                                         history=[h.model_dump() for h in body.history], simple=body.simple):
             etype = event.get("type")
             if etype == "answer":

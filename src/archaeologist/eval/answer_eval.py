@@ -68,7 +68,7 @@ def evaluate(repo_id: int, questions: list[str] | None = None) -> list[dict]:
     questions = questions or DEFAULT_QUESTIONS
     rows = []
     for q in questions:
-        result = answer_question(q, repo_id, k=8)
+        result = answer_question(q, repo_id, user_id=None, k=8)
         cv = citation_validity(result.answer, len(result.evidence))
         verdict = judge(q, result.evidence, result.answer)
         rows.append({"question": q, "n_evidence": len(result.evidence),

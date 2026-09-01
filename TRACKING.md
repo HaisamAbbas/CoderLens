@@ -1,7 +1,8 @@
 # Multi-user migration — tracking
 
 Working log for the "genuine multi-user product" migration (GitHub OAuth,
-per-user private workspaces, operator-metered LLM/embedding budget). The
+per-user private workspaces, per-user LLM usage tracking for operator
+visibility — see Phase 5 below for why this isn't a budget/cap). The
 full design lives in the Claude Code plan file from the planning session;
 this document tracks **what's actually been built, verified, and is still
 pending** so work can resume across sessions without re-deriving context.
@@ -17,7 +18,7 @@ is gitignored; this file is not.
 | 2 | Per-user repo ownership + IDOR fixes | **Done, verified** |
 | 3 | OpenSearch isolation | **Done, verified — scope expanded beyond the plan, see below** |
 | 4 | Per-user integration credentials (Confluence/Jira) | **Done, verified except a real Confluence/Jira round-trip** |
-| 5 | Shared, metered LLM/embedding budget | Not started |
+| 5 | LLM usage tracking (rescoped — see below) | **Done, verified** |
 
 ---
 
@@ -285,6 +286,105 @@ their own docs" question earlier in the migration was asking for.
 - Old `.env` values for `CONFLUENCE_*`/`JIRA_*` are now silently ignored
   (pydantic-settings `extra="ignore"`) rather than erroring — harmless, but
   worth knowing if a stale `.env` still has them.
+
+---
+
+## Phase 5 — LLM usage tracking (rescoped from the original plan)
+
+**The original plan's Phase 5 was a per-user monthly $ cap** — enforced at
+`call_llm`/`call_llm_stream`, with a hard mid-job stop once a user's own
+usage hit their limit. Partway into planning it, explicit direction came
+back: **LLM/embedding cost is the operator's to fund, not the client's —
+clients should never be capped or blocked over cost.** Two follow-up
+choices narrowed the actual scope: (1) track total spend for operator
+visibility only, no caps/blocking of any kind, and (2) still attribute each
+call to the user who triggered it (not just an aggregate total), so the
+operator can see which user's activity costs what.
+
+**What this phase actually built — a pure logging feature, nothing enforced:**
+
+- New `UsageLedger` table (`user_id`, `kind` "llm"/"embedding", `provider`,
+  `model`, `label`, `prompt_tokens`, `completion_tokens`, `estimated`,
+  `cost_usd`, `created_at`).
+- New `rag/pricing.py` — a static $/M-token table. **Only figures actually
+  confirmed live this session are hardcoded** (zai's glm-5.3-flash
+  $0.075/$0.25, aihubmix's glm-5.3-flash $0.11/$0.39, aihubmix's
+  minimax-m3-free $0) — no guessed public list prices for gemini/anthropic/
+  alibaba, since a wrong guess could quietly mislead the operator about real
+  spend. Any unlisted/unverified provider+model falls back to the most
+  expensive KNOWN paid price in the table, never `$0`.
+- New `services/usage.py::record()` — called from `rag/llm.py`'s
+  `call_llm`/`call_llm_stream` (both gained an optional `user_id` kwarg).
+  Best-effort: wrapped in `try/except Exception: pass` so a logging failure
+  can never break the LLM call it's attached to. `user_id=None` (CLI/eval
+  callers with no signed-in user) silently skips recording — nothing to
+  attribute the cost to.
+- **Token counts are ESTIMATED from character length** (~3.5 chars/token,
+  the same ratio `OpenRouterEmbedder` already uses), not each provider's
+  real reported usage — every row is flagged `estimated=True`. Getting real
+  per-provider counts would mean changing what all 7 `_call_X` functions in
+  `rag/llm.py` return; not worth that surface area for a visibility-only
+  feature with no number riding on it besides a query result.
+- **`user_id` threaded through every real LLM call site** so the ledger's
+  per-user attribution is actually accurate, not a guess: `agent/state.py`'s
+  `InvestigationState` (alongside the `repo_id` Phase 3 already added),
+  `agent/graph.py`'s `investigate()`/`investigate_stream()`,
+  `rag/pipeline.py::answer_question()`, `analysis/codemap.py`'s
+  `build_codemap`/`extend_codemap`/`explain_edge`/`_concept_cards`,
+  `analysis/simulation.py::simulate_flow()`, `analysis/wiki.py`'s
+  `build_wiki`/`_decide_structure`/`_write_prose` (including its
+  `ThreadPoolExecutor` fan-out — passed as a plain argument, not a
+  contextvar, for the same reason Phase 5's original plan already
+  identified: a contextvar set on the parent thread isn't visible inside
+  pool workers), `analysis/weaknesses.py`'s `scan_files`/`_scan_file` (same
+  `ThreadPoolExecutor` situation), `analysis/snapshot.py::build_snapshot()`.
+  Background jobs (`services/weakness_scan.py`) resolve `user_id` via
+  `Repo.user_id` — already available, no new job-table column needed, same
+  pattern Phase 4 used for Confluence/Jira job credentials.
+
+**Explicitly NOT done (deliberate scope cuts, not oversights):**
+- **No enforcement of any kind** — no `check_budget()`, no exception type, no
+  mid-job stop, no changes to `weaknesses.py`/`wiki.py`'s submission loops
+  beyond passing `user_id` through. This was the whole point of the rescope.
+- **Embeddings are not tracked** — only `kind="llm"` rows exist today.
+  Adding embedding tracking would mean touching all 5 embedder classes in
+  `retrieval/embeddings.py` (each with its own `_embed`/`embed_documents`/
+  `embed_query`) plus every `get_embedder()` call site, for comparatively
+  little insight: the local embedder is free/in-process, and the paid
+  embedders (alibaba/aihubmix/openrouter) are mostly used once per repo
+  ingest, not per-request. Worth adding later if embedding cost turns out
+  to matter; skipped here to keep this phase proportionate to "just track
+  spend."
+- **No dashboard or admin endpoint** — the ledger is queried directly for
+  now, e.g.:
+  ```sql
+  SELECT user_id, SUM(cost_usd) AS total_cost, COUNT(*) AS calls
+  FROM usage_ledger GROUP BY user_id ORDER BY total_cost DESC;
+  ```
+  A `/api/admin/usage` endpoint (operator-only) is a natural, small
+  follow-up if this needs to be checked more than occasionally — not built
+  here since it wasn't asked for.
+
+**Verified:**
+- Full test suite: 101 passed, same pre-existing environment-dependent
+  failures as every prior phase. Fixed 3 real regressions in
+  `tests/test_weaknesses.py` (three `_scan_file` monkeypatch stand-ins took
+  only `f: File`, one positional arg — now `pool.submit(_scan_file, f, user_id)`
+  passes two). Also fixed `tests/test_offline.py::_state()`, which was
+  missing `repo_id` **and now `user_id`** in its hand-built `InvestigationState`
+  fixture — this had actually been silently broken since Phase 3 added
+  `repo_id` (4 of the "same 7 pre-existing failures" carried forward through
+  Phases 3 and 4 were this exact bug, mislabeled as "pre-existing,
+  unrelated" without being individually root-caused at the time. Caught and
+  fixed now).
+- Direct test: `pricing.price_per_million()`/`estimate_cost()` return the
+  expected confirmed figures and correctly refuse to default an unlisted
+  provider to `$0`; `usage.record()` end-to-end — two calls for one
+  synthetic user produced two `UsageLedger` rows with `estimated=True` and
+  real `cost_usd` values, and a call with `user_id=None` correctly created
+  zero rows.
+- `uv run python -c "import archaeologist.main"` clean (catches any
+  signature-threading mistake across the ~13 call sites touched).
 
 ---
 

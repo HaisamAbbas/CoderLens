@@ -221,7 +221,7 @@ def test_cap_notes_disclose_offline_mode(monkeypatch):
 # ---------- scan_files fan-out ----------
 
 def test_scan_files_fans_out_reports_progress_and_sorts(llm_on, monkeypatch):
-    def fake_scan(f: File):
+    def fake_scan(f: File, user_id=None):
         titles = {"b.py": "B finding", "a.py": "A finding"}
         return ([{"file_path": f.path, "start_line": 1, "title": titles[f.path],
                   "category": "style", "severity": "low"}], 0, None)
@@ -241,7 +241,7 @@ def test_scan_files_discloses_a_provider_that_failed_on_every_file(llm_on, monke
     # An exhausted free quota answers HTTP 200 with a plain-text apology, so every
     # file "succeeds" into unusable output. Zero findings must not read as clean.
     monkeypatch.setattr(weaknesses, "_scan_file",
-                        lambda f: ([], 0, "response contained no 'findings' list"))
+                        lambda f, user_id=None: ([], 0, "response contained no 'findings' list"))
     findings, notes = weaknesses.scan_files(
         [_file("x\n", "a.py"), _file("y\n", "b.py")], 2, True)
     assert findings == []
@@ -254,7 +254,7 @@ def test_scan_files_discloses_a_provider_that_failed_on_every_file(llm_on, monke
 def test_scan_files_discloses_partial_provider_failure(llm_on, monkeypatch):
     calls = {"n": 0}
 
-    def flaky(f: File):
+    def flaky(f: File, user_id=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return [], 0, "503 upstream unavailable"

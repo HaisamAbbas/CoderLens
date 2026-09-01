@@ -28,7 +28,8 @@ def retrieve(question: str, repo_id: int, k: int = 8, streams: list[str] | None 
 
 
 def answer_question(
-    question: str, repo_id: int, k: int = 8, streams: list[str] | None = None, max_tokens: int = 1024
+    question: str, repo_id: int, user_id: int, k: int = 8,
+    streams: list[str] | None = None, max_tokens: int = 1024,
 ) -> RagResult:
     evidence = retrieve(question, repo_id, k=k, streams=streams)
     if not evidence:
@@ -40,5 +41,5 @@ def answer_question(
         return RagResult(question, prompts.build_digest(question, evidence), evidence)
 
     prompt = prompts.build_prompt(question, evidence)
-    answer = call_llm(prompts.SYSTEM, prompt, max_tokens=max_tokens)
+    answer = call_llm(prompts.SYSTEM, prompt, max_tokens=max_tokens, label="ask", user_id=user_id)
     return RagResult(question, answer, evidence)
