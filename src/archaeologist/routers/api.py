@@ -44,6 +44,7 @@ from archaeologist.rag.llm import llm_available
 from archaeologist.retrieval.embeddings import get_embedder
 from archaeologist.retrieval.multi import search_all
 from archaeologist.services import ingest
+from archaeologist.services.blame import blame_file
 from archaeologist.services.conversations import (
     delete_conversation,
     get_conversation,
@@ -375,6 +376,22 @@ def file_content(path: str = Query(...), user: User = CurrentUser) -> dict:
                 for x in syms if x.kind != "import"
             ],
         }
+
+
+@router.get("/blame")
+def file_blame(path: str = Query(...), user: User = CurrentUser) -> dict:
+    with session_scope() as s:
+        r = _repo(s, user)
+        f = s.scalar(select(File).where(File.repo_id == r.id, File.path == path))
+        if f is None:
+            raise HTTPException(404, f"File not found: {path}")
+        if not r.cloned_path:
+            raise HTTPException(404, "No local clone available for blame.")
+        try:
+            lines = blame_file(r.cloned_path, path)
+        except Exception as exc:
+            raise HTTPException(404, f"Blame unavailable: {exc}") from exc
+        return {"path": path, "lines": lines}
 
 
 def _first_sentence(doc: str | None) -> str:

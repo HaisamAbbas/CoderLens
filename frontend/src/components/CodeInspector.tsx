@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import hljs from "highlight.js/lib/core";
-import python from "highlight.js/lib/languages/python";
 import { api } from "../lib/api";
 import { emitExplain } from "../lib/explainBus";
+import { highlightCode } from "../lib/highlight";
 
-hljs.registerLanguage("python", python);
-const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const LINE_H = 18; // must match .ci-code .ci-src code's line-height in explorer.css
 const CARD_VISIBLE_LINES = 14; // roughly what fits in the small card's 280px window
 
@@ -50,10 +47,7 @@ function useFullFile(data: { content: string; language: string | null } | undefi
   return useMemo(() => {
     if (!data?.content) return { html: "", count: 0 };
     const lines = data.content.split("\n");
-    const code = data.content;
-    let html: string;
-    try { html = data.language === "python" ? hljs.highlight(code, { language: "python" }).value : escapeHtml(code); }
-    catch { html = escapeHtml(code); }
+    const html = highlightCode(data.content, data.language);
     return { html, count: lines.length };
   }, [data]);
 }

@@ -1,11 +1,45 @@
 /* ---------- Overview ---------- */
+/* Hero: title + description on the left, key numbers on the right along a
+   shared baseline — a dashboard summary strip, not four identical boxes
+   sitting under the lede like a second, redundant header. */
+.ov-hero {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; flex-wrap: wrap;
+  padding-bottom: 22px; border-bottom: 1px solid var(--border);
+}
+.ov-hero-info { max-width: 620px; }
+.ov-hero-stats { display: flex; gap: 30px; flex-wrap: wrap; padding-bottom: 2px; }
+.ov-stat { text-align: right; }
+.ov-stat .n {
+  font-size: 25px; font-weight: 600; letter-spacing: -0.02em; line-height: 1;
+  font-variant-numeric: tabular-nums; color: var(--text);
+}
+.ov-stat .n.mono { font-family: var(--font-mono); font-size: 16px; }
+.ov-stat .l { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin-top: 5px; }
+.ov-stat.accent .n { color: var(--accent); }
+
 .ov-banner {
-  display: flex; align-items: center; gap: 12px; margin-top: 18px; padding: 12px 16px;
+  display: flex; align-items: center; gap: 12px; margin-top: 20px; padding: 12px 16px;
   border-radius: var(--r-lg); background: var(--accent-soft); border: 1px solid var(--accent);
   color: var(--text); font-size: 13px;
 }
 .ov-banner svg { flex: none; width: 16px; height: 16px; color: var(--accent); }
 .ov-banner span { flex: 1; }
+
+/* Body: a wide main column (orientation — what this is, where to start) next
+   to a narrower rail (risk/structure signals) instead of one long uniform
+   stack of identical boxes — the "doesn't look like an overview" complaint
+   was really that every section had equal visual weight and the page never
+   used the available width. */
+.ov-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); gap: 18px; align-items: start; margin-top: 22px; }
+.ov-col-main, .ov-col-rail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ov-stack-solo { margin-top: 22px; max-width: 760px; }
+.ov-entrypoints { margin-top: 18px; }
+@media (max-width: 860px) {
+  .ov-grid { grid-template-columns: 1fr; }
+  .ov-hero { align-items: flex-start; }
+  .ov-hero-stats { gap: 22px; }
+  .ov-stat { text-align: left; }
+}
 .dd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
 .dd-tile {
   display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 10px;
@@ -142,8 +176,10 @@
 .rd-file.on .rd-file-n { color: var(--accent); opacity: 0.75; }
 .rd-empty-sm { color: var(--text-3); font-size: 12px; padding: 10px 8px; line-height: 1.5; }
 
-/* ---- middle: code ---- */
-.rd-code { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--card-bg); }
+/* ---- middle: code (one pane, or two side by side when split view is open) ---- */
+.rd-panes { display: flex; min-width: 0; min-height: 0; flex: 1; }
+.rd-code-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--card-bg); flex: 1 1 0; }
+.rd-code-pane.split { border-left: 1px solid var(--card-border); flex: 1 1 0; }
 .rd-toolbar {
   border-bottom: 1px solid var(--card-border); padding: 10px 14px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -157,6 +193,7 @@
 .rd-iconbtn:hover { color: var(--text); background: var(--inset); }
 .rd-iconbtn svg { width: 14px; height: 14px; }
 .rd-iconbtn svg.ok { color: var(--good); }
+.rd-iconbtn.on { color: var(--accent); background: var(--accent-soft); }
 
 /* ---- right: outline / symbol panel ---- */
 .rd-ctx { border-left: 1px solid var(--card-border); background: var(--card-bg); overflow: auto; min-height: 0; padding: 16px 14px; }
@@ -259,21 +296,51 @@
 .imp-section .rd-row, .imp-section .rd-empty-sm { margin-top: 8px; }
 
 /* ---------- Investigate ---------- */
-/* Full-width, top-aligned — the form and results span the whole page. */
-.inv-page { max-width: none; }
-.inv { max-width: none; margin: 0; display: flex; flex-direction: column; gap: 16px; }
-.inv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+/* A real chat layout: a slim fixed header, a scrolling message thread that
+   fills the rest of the available height (Shell's own .scroll never scrolls
+   here — this pane manages its own), and a composer pinned to the bottom
+   instead of sitting up near the top like a one-shot search form. */
+/* overflow: hidden is load-bearing, not decorative — height: 100% alone only
+   sets .inv-page's OWN box size, it doesn't stop a child that wants to be
+   taller from spilling past it. Without a hard clip here, that spillover
+   isn't caught by any inner scrollbar — html/body have no overflow control
+   of their own, so the whole document just grows past the viewport instead,
+   pushing the composer down past the visible window entirely. */
+.inv-page { max-width: none; height: 100%; display: flex; padding-bottom: 0; overflow: hidden; }
+.inv-chat { max-width: none; margin: 0; width: 100%; height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.inv-chat-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  flex-shrink: 0; padding-bottom: 16px; border-bottom: 1px solid var(--border);
+}
 .inv-head-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
-/* multi-turn conversation thread — each follow-up gets its own question badge
-   and a visual break from the turn above it */
-.inv-turn { display: flex; flex-direction: column; gap: 16px; }
-.inv-followup { padding-top: 18px; border-top: 1px solid var(--border); }
-.inv-q { display: flex; align-items: baseline; gap: 10px; font-size: 15px; font-weight: 600; color: var(--text); }
-.inv-q-badge {
-  flex-shrink: 0; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
-  color: var(--accent); background: var(--accent-soft); border-radius: var(--r-sm); padding: 3px 8px;
+.inv-chat-scroll { flex: 1; overflow-y: auto; min-height: 0; padding: 20px 2px 8px; display: flex; flex-direction: column; gap: 30px; }
+
+.inv-empty { max-width: 620px; margin: 32px auto 0; text-align: center; }
+.inv-empty .lede { margin: 0 0 18px; }
+.inv-empty .suggest { justify-content: center; }
+
+/* One question + its answer — the "exchange" — rendered as two stacked
+   messages, user right-aligned like every mainstream chat UI, assistant
+   full-width since it carries a rich answer + evidence, not a short reply. */
+.inv-exchange { display: flex; flex-direction: column; gap: 12px; }
+.inv-msg { display: flex; }
+.inv-msg.user { justify-content: flex-end; }
+.inv-msg.assistant { flex-direction: column; align-items: stretch; gap: 12px; }
+.inv-bubble-user {
+  max-width: 74%; background: var(--accent); color: var(--accent-ink);
+  border-radius: 16px 16px 4px 16px; padding: 10px 16px; font-size: 14px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
 }
+
+.inv-composer { display: flex; gap: 10px; flex-shrink: 0; padding: 14px 2px 2px; border-top: 1px solid var(--border); }
+.inv-composer textarea {
+  flex: 1; resize: none; font-family: inherit; font-size: 14.5px; color: var(--text);
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--r); padding: 13px 15px; min-height: 52px;
+}
+.inv-composer textarea:focus { outline: none; border-color: var(--accent); }
+.inv-composer .btn { align-self: flex-end; }
+
 .ask-box { display: flex; gap: 10px; }
 .ask-box textarea {
   flex: 1; resize: none; font-family: inherit; font-size: 14.5px; color: var(--text);
@@ -286,7 +353,21 @@
 
 .q-echo { background: var(--card-bg); border: 1px solid var(--card-border); box-shadow: var(--card-glow); border-radius: var(--r-lg); padding: 15px 18px; font-size: 15.5px; }
 .q-echo .u { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin-bottom: 5px; }
-.steps { border-left: 2px solid var(--border); margin-left: 9px; padding-left: 18px; display: flex; flex-direction: column; }
+.think { display: flex; flex-direction: column; gap: 4px; }
+.think-toggle {
+  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  background: none; border: none; cursor: pointer; padding: 4px 2px;
+  font-size: 12.5px; color: var(--text-3); font-family: inherit;
+}
+.think-toggle:hover { color: var(--text-2); }
+.think-toggle .spin { width: 12px; height: 12px; }
+.think-plus {
+  display: grid; place-items: center; width: 15px; height: 15px; flex-shrink: 0;
+  border: 1px solid var(--border); border-radius: 4px; font-size: 11px; line-height: 1;
+  transition: transform 0.12s; color: var(--text-3);
+}
+.think-plus.open { transform: rotate(45deg); }
+.steps { border-left: 2px solid var(--border); margin-left: 9px; padding-left: 18px; margin-top: 6px; display: flex; flex-direction: column; }
 .step { position: relative; padding: 9px 0; }
 .step::before { content: ""; position: absolute; left: -25px; top: 13px; width: 11px; height: 11px; border-radius: 50%; background: var(--good); border: 2px solid var(--bg); }
 .step.running::before { background: var(--warn); }

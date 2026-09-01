@@ -7,8 +7,8 @@ import { emitExplain } from "../lib/explainBus";
 import CodeView from "../components/CodeView";
 import { CodeSkeleton } from "../components/PageState";
 import {
-  ArrowIcon, BookIcon, ChevronIcon, CopyIcon, CheckIcon, InboundIcon,
-  OutboundIcon, SearchIcon, SparkleIcon, TargetIcon, XIcon,
+  ArrowIcon, BookIcon, ChevronIcon, CopyIcon, CheckIcon, HistoryIcon, InboundIcon,
+  OutboundIcon, SearchIcon, SparkleIcon, SplitIcon, TargetIcon, XIcon,
 } from "../components/icons";
 import type { FileContent, SymbolDetail, SymbolIndexEntry, SymbolRef, TreeFile } from "../lib/types";
 
@@ -45,6 +45,13 @@ export default function Reader() {
   const [symId, setSymId] = useState<number | null>(st0?.symbolId ?? null);
   const [filter, setFilter] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // A second, independent pane opened "beside" the main one (Alt/Cmd-click a
+  // go-to-definition target, or the peek card's split button) — for comparing
+  // a caller and callee, or a symbol's two definitions, without losing place.
+  const [split, setSplit] = useState<{ path: string; symbolId: number | null } | null>(null);
+  // Blame is real per-line git history, live-computed on demand — off by
+  // default (this is a reading view, not a history tool) and toggled per file.
+  const [blameOn, setBlameOn] = useState(false);
   // A manually-selected (or deep-linked) line range — GitHub-style permalink
   // gesture: click a gutter number, shift-click another, get a shareable URL.
   const [highlight, setHighlightState] = useState<{ start: number; end: number } | null>(
@@ -79,6 +86,12 @@ export default function Reader() {
   const fileQ = useQuery({ queryKey: ["file", path], queryFn: () => api.file(path!), enabled: !!path });
   const symQ = useQuery({ queryKey: ["symbol", symId], queryFn: () => api.symbol(symId!), enabled: symId != null });
   const idxQ = useQuery({ queryKey: ["symbolIndex"], queryFn: api.symbolIndex, staleTime: Infinity });
+  const fileQ2 = useQuery({
+    queryKey: ["file", split?.path], queryFn: () => api.file(split!.path), enabled: !!split?.path,
+  });
+  const blameQ = useQuery({
+    queryKey: ["blame", path], queryFn: () => api.blame(path!), enabled: blameOn && !!path,
+  });
 
   // Client-side resolution maps (name→def, id→def) for hover-peek + go-to-def.
   const index = useMemo(
@@ -116,6 +129,9 @@ export default function Reader() {
   const gotoRef = (r: SymbolRef) => { if (r.file_path !== path) setPath(r.file_path); setSymId(r.id); setHighlight(null); };
   // go-to-definition from an inline click / peek card (may cross files)
   const goto = (p: string, id: number) => { if (p !== path) setPath(p); setSymId(id); setHighlight(null); };
+  // same, but into the secondary pane instead of replacing the primary one
+  const openBeside = (p: string, id: number) => setSplit({ path: p, symbolId: id });
+  const gotoInSplit = (p: string, id: number) => setSplit({ path: p, symbolId: id });
   const explainEntry = (en: SymbolIndexEntry) =>
     emitExplain(explainQuestion(en.qualified_name, en.kind, en.path, en.line));
   const explainSymbol = (s: SymbolDetail) =>
@@ -129,6 +145,9 @@ export default function Reader() {
     : symQ.data && symQ.data.file_path === path
       ? { start: symQ.data.start_line, end: symQ.data.end_line }
       : null;
+
+  const splitSpan = split?.symbolId != null ? fileQ2.data?.symbols.find((x) => x.id === split.symbolId) : undefined;
+  const splitRange = splitSpan ? { start: splitSpan.start_line, end: splitSpan.end_line } : null;
 
   return (
     <div className="reader-grid">
@@ -174,40 +193,87 @@ export default function Reader() {
         </div>
       </div>
 
-      <div className="rd-code">
-        <div className="rd-toolbar">
-          <span className="crumb">
-            {path
-              ? <>
-                  <span className="cdim">{dirOf(path).replace(/^src\//, "src/")}</span>
-                  <span className="csep">/</span>
-                  <span className="cfile">{baseOf(path)}</span>
-                  {symId != null && localSpan && (
-                    <><span className="csep">›</span><span className="csym">{localSpan.name}</span></>
-                  )}
-                </>
-              : "—"}
-          </span>
-          <div className="rd-toolbar-actions">
-            {fileQ.data && <span className="chip tnum">{fileQ.data.symbols.length} symbols · {fileQ.data.loc} loc</span>}
-            {path && <CopyPathButton path={path} />}
+      <div className="rd-panes">
+        <div className="rd-code-pane">
+          <div className="rd-toolbar">
+            <span className="crumb">
+              {path
+                ? <>
+                    <span className="cdim">{dirOf(path).replace(/^src\//, "src/")}</span>
+                    <span className="csep">/</span>
+                    <span className="cfile">{baseOf(path)}</span>
+                    {symId != null && localSpan && (
+                      <><span className="csep">›</span><span className="csym">{localSpan.name}</span></>
+                    )}
+                  </>
+                : "—"}
+            </span>
+            <div className="rd-toolbar-actions">
+              {fileQ.data && <span className="chip tnum">{fileQ.data.symbols.length} symbols · {fileQ.data.loc} loc</span>}
+              {path && (
+                <button
+                  className={"rd-iconbtn" + (blameOn ? " on" : "")}
+                  onClick={() => setBlameOn((v) => !v)}
+                  title={blameOn ? "Hide git blame" : "Show git blame"}
+                  aria-label="Toggle git blame"
+                >
+                  {blameQ.isFetching && blameOn ? <span className="spin" style={{ width: 12, height: 12 }} /> : <HistoryIcon />}
+                </button>
+              )}
+              {path && <CopyPathButton path={path} />}
+            </div>
           </div>
+          {fileQ.isLoading && <CodeSkeleton />}
+          {fileQ.data && (
+            <CodeView
+              content={fileQ.data.content ?? ""}
+              language={fileQ.data.language}
+              range={range}
+              symbols={fileQ.data.symbols}
+              index={index}
+              activeId={symId}
+              onGoto={goto}
+              onGotoBeside={openBeside}
+              onSelectSymbol={setSymId}
+              onExplain={explainEntry}
+              highlight={highlight}
+              onHighlight={setHighlight}
+              blame={blameOn ? blameQ.data?.lines : undefined}
+            />
+          )}
         </div>
-        {fileQ.isLoading && <CodeSkeleton />}
-        {fileQ.data && (
-          <CodeView
-            content={fileQ.data.content ?? ""}
-            language={fileQ.data.language}
-            range={range}
-            symbols={fileQ.data.symbols}
-            index={index}
-            activeId={symId}
-            onGoto={goto}
-            onSelectSymbol={setSymId}
-            onExplain={explainEntry}
-            highlight={highlight}
-            onHighlight={setHighlight}
-          />
+
+        {split && (
+          <div className="rd-code-pane split">
+            <div className="rd-toolbar">
+              <span className="crumb">
+                <SplitIcon style={{ width: 12, height: 12, color: "var(--text-3)", marginRight: 6, verticalAlign: -1 }} />
+                <span className="cdim">{dirOf(split.path).replace(/^src\//, "src/")}</span>
+                <span className="csep">/</span>
+                <span className="cfile">{baseOf(split.path)}</span>
+              </span>
+              <div className="rd-toolbar-actions">
+                {fileQ2.data && <span className="chip tnum">{fileQ2.data.symbols.length} symbols · {fileQ2.data.loc} loc</span>}
+                <button className="rd-iconbtn" onClick={() => setSplit(null)} title="Close split pane" aria-label="Close split pane">
+                  <XIcon />
+                </button>
+              </div>
+            </div>
+            {fileQ2.isLoading && <CodeSkeleton />}
+            {fileQ2.data && (
+              <CodeView
+                content={fileQ2.data.content ?? ""}
+                language={fileQ2.data.language}
+                range={splitRange}
+                symbols={fileQ2.data.symbols}
+                index={index}
+                activeId={split.symbolId}
+                onGoto={gotoInSplit}
+                onSelectSymbol={(id) => setSplit((s) => (s ? { ...s, symbolId: id } : s))}
+                onExplain={explainEntry}
+              />
+            )}
+          </div>
         )}
       </div>
 

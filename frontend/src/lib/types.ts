@@ -102,6 +102,10 @@ export interface FileContent {
   path: string; language: string | null; category: string; loc: number;
   content: string; symbols: SymbolSpan[];
 }
+export interface BlameLine {
+  line: number; sha: string; author: string; date: string; message: string;
+}
+export interface FileBlame { path: string; lines: BlameLine[]; }
 export interface SymbolRef {
   id: number; qualified_name: string; kind: string; file_path: string; start_line: number;
   edge: string; confidence: number;

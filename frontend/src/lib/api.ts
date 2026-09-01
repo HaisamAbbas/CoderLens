@@ -2,7 +2,7 @@ import type {
   ArchDelta, ArchRefs,
   Architecture, AskResult, Codemap, CodemapEdge, CodemapNode, Communities, ConfluenceJob,
   ConversationDetail, ConversationKind, ConversationSummary, Coupling, DeadCode, Entrypoint,
-  FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, Integrations, InvestigateResult,
+  FileBlame, FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, Integrations, InvestigateResult,
   JiraTicketJob, Overview, Repo, RepoJob, SearchResponse, SimulationTrace, Status, Stream,
   StreamEvent, SymbolDetail, SymbolIndexEntry, TreeFile, User, WeaknessList, WeaknessScanJob, Wiki,
 } from "./types";
@@ -74,6 +74,7 @@ export const api = {
     get<ArchDelta>(`/api/architecture/delta?base=${q(base)}&head=${q(head)}`),
   tree: () => get<{ files: TreeFile[] }>("/api/tree"),
   file: (path: string) => get<FileContent>(`/api/file?path=${q(path)}`),
+  blame: (path: string) => get<FileBlame>(`/api/blame?path=${q(path)}`),
   symbol: (id: number) => get<SymbolDetail>(`/api/symbol/${id}`),
   symbolIndex: () => get<{ symbols: SymbolIndexEntry[] }>("/api/symbols/index"),
   graph: (level: "file" | "symbol" = "file", scope?: string, neighbors = false) =>

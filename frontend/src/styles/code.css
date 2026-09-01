@@ -28,6 +28,27 @@
 .code-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--card-bg); position: relative; }
 .code-inner { display: flex; min-height: min-content; min-width: min-content; }
 
+/* real per-line git blame, toggled on from the Reader toolbar — a quiet
+   author-hued rail to the left of the line-number gutter, GitHub/GitLens
+   style. Each row is exactly LH (20px) tall to stay aligned with the code
+   and gutter rows it sits beside, fold rows included. */
+/* fixed width (not auto) so the gutter beside it — also sticky-left — can
+   offset by exactly this much and the two never overlap during horizontal
+   scroll (see the inline `left` style CodeView sets on .gutter). */
+.blame-col {
+  flex-shrink: 0; width: 176px; padding: 12px 0; user-select: none;
+  border-right: 1px solid var(--border); background: var(--surface-2);
+  position: sticky; left: 0; z-index: 2; display: flex; flex-direction: column;
+}
+.bl-row {
+  height: 20px; line-height: 20px; display: flex; align-items: center; gap: 6px;
+  padding: 0 10px 0 8px; border-left: 2px solid transparent; font-size: 11px;
+  white-space: nowrap; cursor: default;
+}
+.bl-author { color: var(--text-2); max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.bl-date { color: var(--text-3); flex-shrink: 0; }
+.bl-fold { border-left-color: transparent; }
+
 /* gutter: per-line rows so definition lines can carry a "used by N" badge */
 .code-inner .gutter {
   padding: 12px 8px 12px 10px; user-select: none; flex-shrink: 0;
@@ -67,14 +88,43 @@ button.ln-btn:hover { background: var(--inset); color: var(--text-2); }
   white-space: nowrap; transition: max-width 0.15s ease, opacity 0.12s, margin 0.15s ease;
 }
 .gutter .gl:hover .rb-count, .gutter .rb:hover .rb-count { max-width: 22px; opacity: 1; margin-right: 4px; }
+.gutter .gl.found { background: color-mix(in srgb, #eab308 20%, transparent); }
+
+/* fold toggle — sits before the ref-count dot on any foldable definition line */
+.fold-btn {
+  border: none; background: none; padding: 0 1px; cursor: pointer; display: inline-flex;
+  align-items: center; color: var(--text-3); border-radius: 3px;
+}
+.fold-btn:hover { color: var(--text); background: var(--inset); }
+.fold-chev { width: 11px; height: 11px; transform: rotate(90deg); transition: transform 0.12s; }
+.fold-chev.open { transform: rotate(0deg); }
+/* the collapsed-region placeholder row's own gutter cell — matches .gl's 20px row height */
+.gutter .cv-fold-gutter {
+  height: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  color: var(--text-3);
+}
+.gutter .cv-fold-gutter:hover { color: var(--accent); background: var(--inset); }
+.gutter .cv-fold-gutter .fold-chev { transform: rotate(-90deg); }
 
 .code-wrap { position: relative; flex: 1; padding: 12px 16px; min-width: 0; }
-.code-wrap pre { margin: 0; }
-.code-wrap code { font-family: var(--font-mono); font-size: 12.5px; line-height: 20px; white-space: pre; }
+/* One div per source line (not a single <pre><code> blob) — each line's
+   highlighted HTML is independently valid (see splitHighlightedByLine), which
+   is what lets a fold actually remove rows from the flow instead of just
+   hiding text in place; every band/hover Y-position below is computed in
+   this same row-index space via rowIndexFor, not raw file-line arithmetic. */
+.cv-lines { font-family: var(--font-mono); font-size: 12.5px; }
+.cv-line { height: 20px; line-height: 20px; white-space: pre; }
+.cv-fold-row {
+  cursor: pointer; color: var(--text-3); font-style: italic; white-space: nowrap;
+  background: var(--inset); border-radius: 3px; padding: 0 6px;
+}
+.cv-fold-row:hover { color: var(--accent); }
 .code-wrap .band {
   position: absolute; left: 0; right: 0; background: var(--accent-soft);
   border-left: 2px solid var(--accent); pointer-events: none;
 }
+.code-wrap .band.find { background: color-mix(in srgb, #eab308 22%, transparent); border-left-color: #eab308; }
+.code-wrap .band.find.active { background: color-mix(in srgb, #eab308 40%, transparent); border-left-width: 3px; }
 /* hover preview of a whole function — fainter than the selected one */
 .code-wrap .band.ghost {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
@@ -145,15 +195,42 @@ button.ln-btn:hover { background: var(--inset); color: var(--text-2); }
   display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px;
   font-size: 10.5px; color: var(--text-3);
 }
-.peek-foot > span { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.peek-foot > span:first-child { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .peek-loc { font-family: var(--font-mono); }
 .peek-refs { color: var(--accent); white-space: nowrap; }
+.peek-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
 .peek-explain {
   flex: none; display: flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600;
   color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: none; border-radius: 999px; padding: 3px 9px; cursor: pointer; transition: background 0.12s;
 }
 .peek-explain:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.peek-beside {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px;
+  color: var(--text-3); background: none; border: 1px solid var(--border); border-radius: 999px;
+  cursor: pointer; transition: color 0.12s, border-color 0.12s;
+}
+.peek-beside:hover { color: var(--accent); border-color: var(--accent); }
+
+/* in-file find bar — floats over the top of the code, not a layout row, so
+   opening it never reflows the code beneath (Ctrl/Cmd+F, Esc to close). */
+.cv-find {
+  position: sticky; top: 8px; z-index: 6; margin: 0 12px; display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  box-shadow: var(--shadow-lg); padding: 6px 8px; width: fit-content; max-width: calc(100% - 24px);
+}
+.cv-find svg { width: 14px; height: 14px; color: var(--text-3); flex-shrink: 0; }
+.cv-find input {
+  border: none; background: none; font-size: 12.5px; color: var(--text); width: 200px; outline: none;
+}
+.cv-find-count { font-size: 11px; color: var(--text-3); flex-shrink: 0; min-width: 3ch; }
+.cv-find button {
+  border: none; background: none; color: var(--text-2); cursor: pointer; padding: 3px 6px;
+  border-radius: 4px; font-size: 14px; line-height: 1; display: grid; place-items: center;
+}
+.cv-find button:hover:not(:disabled) { background: var(--inset); color: var(--text); }
+.cv-find button:disabled { opacity: 0.35; cursor: default; }
+.cv-find button svg { width: 12px; height: 12px; color: inherit; }
 
 /* code-head breadcrumb */
 .code-head .crumb { display: flex; align-items: center; gap: 7px; font-size: 13px; min-width: 0; }
