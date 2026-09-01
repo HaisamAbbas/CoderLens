@@ -97,4 +97,5 @@ def me(user: User = CurrentUser) -> dict:
         "github_login": user.github_login,
         "email": user.email,
         "avatar_url": user.avatar_url,
+        "is_guest": user.is_guest,
     }

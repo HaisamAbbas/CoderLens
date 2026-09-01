@@ -6,7 +6,7 @@ to the client; a blank token on a PUT means "keep the existing one."
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from archaeologist.auth import CurrentUser
+from archaeologist.auth import RequireRealUser
 from archaeologist.models.db import session_scope
 from archaeologist.models.entities import User
 from archaeologist.services import user_integrations
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 
 @router.get("")
-def get_integrations(user: User = CurrentUser) -> dict:
+def get_integrations(user: User = RequireRealUser) -> dict:
     with session_scope() as s:
         integ = user_integrations.get(s, user.id)
         return {
@@ -45,7 +45,7 @@ class ConfluenceIntegrationBody(BaseModel):
 
 
 @router.put("/confluence")
-def put_confluence(body: ConfluenceIntegrationBody, user: User = CurrentUser) -> dict:
+def put_confluence(body: ConfluenceIntegrationBody, user: User = RequireRealUser) -> dict:
     with session_scope() as s:
         user_integrations.upsert_confluence(
             s, user.id, body.base_url, body.email, body.api_token, body.space_key,
@@ -54,7 +54,7 @@ def put_confluence(body: ConfluenceIntegrationBody, user: User = CurrentUser) ->
 
 
 @router.delete("/confluence")
-def delete_confluence(user: User = CurrentUser) -> dict:
+def delete_confluence(user: User = RequireRealUser) -> dict:
     with session_scope() as s:
         user_integrations.clear_confluence(s, user.id)
     return {"ok": True}
@@ -69,7 +69,7 @@ class JiraIntegrationBody(BaseModel):
 
 
 @router.put("/jira")
-def put_jira(body: JiraIntegrationBody, user: User = CurrentUser) -> dict:
+def put_jira(body: JiraIntegrationBody, user: User = RequireRealUser) -> dict:
     with session_scope() as s:
         user_integrations.upsert_jira(
             s, user.id, body.base_url, body.email, body.api_token,
@@ -79,7 +79,7 @@ def put_jira(body: JiraIntegrationBody, user: User = CurrentUser) -> dict:
 
 
 @router.delete("/jira")
-def delete_jira(user: User = CurrentUser) -> dict:
+def delete_jira(user: User = RequireRealUser) -> dict:
     with session_scope() as s:
         user_integrations.clear_jira(s, user.id)
     return {"ok": True}

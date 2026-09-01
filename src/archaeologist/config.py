@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # no new dependency). Any long random string; rotating it logs everyone
     # out at once (no server-side session store to selectively revoke from).
     session_secret: str = Field(default="")
+    # Browse-public-repos-without-login: a guest gets a throwaway account and
+    # workspace (see models.entities.User.is_guest, services/guest_cleanup.py)
+    # so every existing per-user isolation mechanism applies unmodified. This
+    # is how long a guest's data survives with no activity before the
+    # background reaper deletes it — generous enough not to lose someone's
+    # exploration mid-session, bounded so it can't accumulate forever.
+    guest_data_ttl_hours: int = Field(default=24)
 
     # --- LLM (reasoning / agent) — pluggable provider ---
     # "auto" (default): use a hosted key if one is set, else a local Ollama model

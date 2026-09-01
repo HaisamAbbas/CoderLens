@@ -205,7 +205,15 @@ export default function Shell() {
               </a>
             </>
           )}
-          {user && (
+          {user?.is_guest && (
+            <div className="user-chip guest">
+              <span className="user-name">Browsing as guest</span>
+              <a className="user-signout" href="/api/auth/github/login" title="Sign in to save your work and connect integrations">
+                Sign in with GitHub
+              </a>
+            </div>
+          )}
+          {user && !user.is_guest && (
             <div className="user-chip">
               {user.avatar_url && <img src={user.avatar_url} alt="" className="user-avatar" />}
               <span className="user-name" title={user.email ?? undefined}>{user.github_login}</span>

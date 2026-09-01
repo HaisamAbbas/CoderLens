@@ -24,6 +24,28 @@ def init_db() -> None:
     from archaeologist.models import entities  # noqa: F401
 
     Base.metadata.create_all(engine)
+    _ensure_additive_columns()
+
+
+def _ensure_additive_columns() -> None:
+    """No Alembic in this project (a deliberate, known limitation) —
+    create_all() only creates missing TABLES, never alters existing ones, so
+    a new column on an already-existing table (e.g. User.is_guest for guest
+    sessions) silently wouldn't exist in a real database otherwise. This is a
+    minimal, idempotent patch for exactly that case: additive, backfillable
+    columns only. A genuinely destructive/renaming change still needs the
+    "reset the local dev schema" approach TRACKING.md documents from Phase 2."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns("users")}
+    with engine.begin() as conn:
+        if "is_guest" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_guest boolean NOT NULL DEFAULT false"))
+        if "last_active_at" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN last_active_at timestamptz"))
 
 
 @contextmanager

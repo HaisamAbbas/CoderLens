@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from archaeologist.agent.graph import investigate_stream
-from archaeologist.auth import CurrentUser, OptionalUser
+from archaeologist.auth import CurrentUser, RequireRealUser
 from archaeologist.config import settings
 from archaeologist.indexing.opensearch_client import get_client
 from archaeologist.ingestion.repository import normalize_repo_url
@@ -95,13 +95,14 @@ def _count(session, model, repo_id) -> int:
 
 
 @router.get("/status")
-def status(user: User | None = OptionalUser) -> dict:
+def status(user: User = CurrentUser) -> dict:
     """Runtime capabilities — which LLM/embedding providers are active. Lets the
     UI show that the app works without any API key (local Ollama / offline).
-    The LLM/embedding info is server-wide config, not user data, and stays
-    open (matching `/health`) — but confluence/jira "configured" now reflects
-    THIS user's own connected integrations (Phase 4), so it's false when
-    logged out rather than 401ing the whole endpoint."""
+    The LLM/embedding info is server-wide config, not user data. `user` is
+    never None now — a logged-out visitor resolves to a guest account (see
+    auth.py) — so confluence/jira "configured" naturally reads false for a
+    guest (they can't have UserIntegration credentials; that requires
+    RequireRealUser) without any special-casing here."""
     from archaeologist.rag.llm import active_model, llm_available, resolve_provider
     from archaeologist.retrieval.embeddings import get_embedder
     from archaeologist.services import user_integrations
@@ -113,12 +114,10 @@ def status(user: User | None = OptionalUser) -> dict:
         pass
     embedding_provider = settings.embedding_provider
 
-    confluence_ok, jira_ok = False, False
-    if user is not None:
-        with session_scope() as s:
-            integ = user_integrations.get(s, user.id)
-            confluence_ok = user_integrations.confluence_configured(integ)
-            jira_ok = user_integrations.jira_configured(integ)
+    with session_scope() as s:
+        integ = user_integrations.get(s, user.id)
+        confluence_ok = user_integrations.confluence_configured(integ)
+        jira_ok = user_integrations.jira_configured(integ)
 
     return {
         "llm": {
@@ -206,6 +205,9 @@ def add_repo(body: AddRepoBody, user: User = CurrentUser) -> dict:
     running, the existing job is returned instead of starting a second one —
     a different user's in-flight job for the same URL is unaffected.
     """
+    token = body.token.strip()
+    if token and user.is_guest:
+        raise HTTPException(401, "Sign in with GitHub to ingest a private repository.")
     url = body.url.strip()
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -214,7 +216,7 @@ def add_repo(body: AddRepoBody, user: User = CurrentUser) -> dict:
     # ".../owner/repo/tree/main") means the repo, not a git remote — normalize
     # before it's stored/used anywhere downstream, not just at clone time.
     url = normalize_repo_url(url)
-    job = ingest.start_ingest(url, user.id, token=body.token.strip())
+    job = ingest.start_ingest(url, user.id, token=token)
     return {"job_id": job["id"], "repo_url": url, "status": job["status"]}  # token never echoed
 
 
@@ -257,6 +259,8 @@ def refresh_repo(body: RefreshRepoBody | None = None, user: User = CurrentUser) 
         r = _repo(s, user)
         url = r.url
     token = (body.token if body else "").strip()
+    if token and user.is_guest:
+        raise HTTPException(401, "Sign in with GitHub to use a private-repo access token.")
     job = ingest.start_ingest(url, user.id, token=token)
     return {"job_id": job["id"], "repo_url": url, "status": job["status"]}
 

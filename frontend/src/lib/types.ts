@@ -1,5 +1,6 @@
 export interface User {
   id: number; github_login: string; email: string | null; avatar_url: string | null;
+  is_guest: boolean;
 }
 
 export interface Counts { files: number; symbols: number; commits: number; issues: number; edges: number; }

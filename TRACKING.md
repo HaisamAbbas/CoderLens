@@ -14,11 +14,12 @@ is gitignored; this file is not.
 
 | Phase | What | Status |
 |---|---|---|
-| 1 | Auth foundation (GitHub OAuth + sessions) | **Done, verified except real GitHub round-trip** |
+| 1 | Auth foundation (GitHub OAuth + sessions) | **Done, verified — real GitHub round-trip confirmed** |
 | 2 | Per-user repo ownership + IDOR fixes | **Done, verified** |
 | 3 | OpenSearch isolation | **Done, verified — scope expanded beyond the plan, see below** |
 | 4 | Per-user integration credentials (Confluence/Jira) | **Done, verified except a real Confluence/Jira round-trip** |
 | 5 | LLM usage tracking (rescoped — see below) | **Done, verified** |
+| 6 | Guest access (browse public repos without login) | **Done, verified — not in the original plan, see below** |
 
 ---
 
@@ -35,19 +36,44 @@ is gitignored; this file is not.
 
 **Verified (without needing a real GitHub account):**
 - `users` table creation + upsert-by-`github_id` logic, tested directly against the real local Postgres.
-- `GET /api/auth/me` → 401 when logged out.
+- `GET /api/auth/me` → 401 when logged out. **(Superseded by Phase 6:** it now
+  auto-resolves to a guest account instead of 401ing — see below.)
 - `GET /api/auth/github/login` → correctly builds the GitHub authorize URL (client_id, redirect_uri, scope, signed `state` in the session cookie) when configured; returns a clear 500 (not a crash) when `GITHUB_OAUTH_CLIENT_ID` is unset.
 - Frontend: `tsc --noEmit` clean, Vite HMR applied all changes with no errors.
 
-**Pending — needs you, not code:**
-1. Register a GitHub OAuth App at github.com/settings/developers → OAuth Apps → New OAuth App.
-   - Callback URL (local dev): `http://localhost:8000/api/auth/github/callback`
-   - You'll need a **second** OAuth App (or update the callback) for production, pointing at the deployed domain.
-2. Put the resulting values in `.env`:
-   - `GITHUB_OAUTH_CLIENT_ID`
-   - `GITHUB_OAUTH_CLIENT_SECRET`
-   - `SESSION_SECRET` — already generated and set locally; **generate a separate one for production**, don't reuse the dev value.
-3. Click through the real login flow once in a browser to confirm the full round-trip (GitHub's consent screen can't be tested from here).
+**Real GitHub round-trip: done.** A GitHub OAuth App was registered
+(callback `http://localhost:8000/api/auth/github/callback`), its client
+ID/secret added to `.env`, and the actual browser login flow completed
+successfully.
+
+That surfaced one real bug along the way, worth knowing about since it'll
+resurface if the dev proxy setup ever changes: `frontend/vite.config.ts`'s
+`/api` proxy didn't set `changeOrigin: true`, so a browser request routed
+through the Vite dev server (`:5173`) reached the backend with
+`Host: localhost:5173` still attached — and `routers/auth.py`'s
+`_callback_url()` builds the OAuth redirect URL from that incoming request's
+Host header on purpose (so the same code works in dev and prod with no
+extra setting). The mismatch made GitHub reject the login with "redirect_uri
+is not associated with this application," even though the client ID and the
+registered callback URL matched exactly — the actual redirect_uri being
+sent silently didn't. Fixed by setting `changeOrigin: true` **and** pointing
+the proxy target at `localhost` rather than `127.0.0.1` (changeOrigin copies
+the target's host into that header verbatim, and it has to match the
+registered callback string-for-string — `127.0.0.1:8000` and
+`localhost:8000` are two different strings as far as GitHub's exact-match
+check is concerned, even though they're the same machine).
+
+**Still needs you, not code, before a production deploy:**
+1. A **second** GitHub OAuth App (or an updated callback URL on this one)
+   pointing at the deployed domain — the one just registered is scoped to
+   `localhost:8000`.
+2. A **separate** `SESSION_SECRET` for production — don't reuse the local
+   dev value.
+3. Whatever host runs the built frontend needs the same `changeOrigin`
+   consideration if it also proxies `/api` through something other than
+   serving the FastAPI app directly (the prod SPA-fallback path in
+   `main.py` doesn't proxy at all — frontend/dist is served from the same
+   origin as the API — so this is a dev-only concern unless that changes).
 
 ---
 
@@ -385,6 +411,167 @@ operator can see which user's activity costs what.
   zero rows.
 - `uv run python -c "import archaeologist.main"` clean (catches any
   signature-threading mistake across the ~13 call sites touched).
+
+---
+
+## Phase 6 — Guest access (browse public repos without login)
+
+**Not in the original 5-phase plan** — added afterward: "for public repos it
+should show front page [without requiring login]; if a user wants to ingest
+a private repo, they can log in with GitHub." A real product decision was
+needed before building it — the original Phase 5 plan already established
+LLM cost as fully operator-funded with no per-user cap (see Phase 5 above),
+so "should guests get LLM features too" was a genuine cost-exposure
+question, not a detail. Answered explicitly: **yes, full parity** — a guest
+gets the whole app, including Investigate/Ask/Bug Hunter/Codemap's AI
+curation, identical to a signed-in user. Only two things are gated: (1)
+ingesting a **private** repo (needs a real GitHub-linked account, since the
+whole point of signing in there is accountability for a pasted PAT — the
+token itself would work regardless of the app-account's own auth state, but
+requiring real login matches the user's own mental model of "prove it's
+your repo"), and (2) Confluence/Jira integrations (structurally impossible
+for a guest — there's no durable identity to attach saved credentials to).
+
+**The core design decision**: a guest gets a REAL `User` row
+(`is_guest=True`, a synthetic negative `github_id` so it can never collide
+with a real — always positive — GitHub account id), auto-created on first
+use and remembered via the session cookie (`{"guest_user_id": int}`,
+alongside — never together with — the existing `{"user_id": int}` for real
+accounts). This means **every** per-user ownership/IDOR-safe mechanism built
+in Phases 2 and 3 (`_repo()`, `_owns_repo()`, every OpenSearch `repo_id`
+filter) works for guests completely unmodified — a guest's data is exactly
+as isolated as a real user's, just owned by a throwaway account instead of
+a durable one. The alternative (some kind of "anonymous/shared" repo
+concept) would have meant re-deriving isolation logic for a second code
+path; this doesn't.
+
+**Backend:**
+- `User` gains `is_guest: bool` and `last_active_at: datetime | None`
+  (bumped only for guests, on every request that resolves one — real
+  accounts' data is never reaped, so there's nothing to track for them).
+  Since this project has no Alembic, and `create_all()` only creates
+  missing *tables* (a silent no-op for a new column on an existing one —
+  the exact problem Phase 2 hit before), `models/db.py::init_db()` gained a
+  small idempotent `_ensure_additive_columns()` that checks
+  `information_schema` and issues a plain `ALTER TABLE` for just these two
+  columns if missing. Deliberately narrow — a genuinely destructive/renaming
+  schema change still needs the "reset the local dev schema" approach from
+  Phase 2, not this.
+- `auth.py` rewritten: `get_current_user`/`CurrentUser` (used by nearly
+  every route already) now **never 401s** — a real session resolves to that
+  account; anyone else gets an auto-created or reused guest. New
+  `get_current_real_user`/`RequireRealUser` keeps the old hard-401 behavior,
+  used only where a durable identity is actually required. The old
+  `get_current_user_optional`/`OptionalUser` (added in Phase 3 specifically
+  so `/api/status` could work logged-out without a hard gate) is gone — now
+  that `CurrentUser` itself never fails, `/api/status` just uses it
+  directly, and its confluence/jira "configured" fields naturally read
+  `false` for a guest with no special-casing (a guest's `UserIntegration`
+  lookup is always empty, since only `RequireRealUser`-gated routes can
+  ever create one).
+- `routers/integrations.py`'s five routes (get/put/delete confluence,
+  put/delete jira) switched from `CurrentUser` to `RequireRealUser`.
+- `POST /api/repos` and `POST /api/repos/refresh` 401 with a clear message
+  ("Sign in with GitHub to ingest a private repository") only when a
+  `token` is actually supplied by a guest — a guest ingesting a public URL
+  with no token is untouched.
+- New `services/repo_lifecycle.py::delete_repo()` — fully removes one repo:
+  Postgres rows across every child table in FK-safe order (no
+  `ON DELETE CASCADE` is set anywhere in this schema, so this mirrors
+  `indexing/run.py::extract_to_postgres()`'s existing
+  SymbolEdge/Weakness-before-Symbol ordering) plus this repo's OpenSearch
+  documents. Deliberately does NOT touch the on-disk git clone —
+  `clone_or_open()` reuses that directory across every `Repo` row sharing a
+  URL (a known pre-existing limitation, see Phase 2's notes above), so
+  deleting it here could break a different user's still-live repo pointed
+  at the same clone.
+- New `services/guest_cleanup.py::reap_stale_guests()` — finds every guest
+  whose `last_active_at` is older than `settings.guest_data_ttl_hours`
+  (default 24h), deletes every repo they own via `delete_repo()`, then their
+  `IngestJob`/`UsageLedger` rows and the `User` row itself.
+- `main.py`: a new daemon thread (`_guest_reaper_loop`, same plain-threading
+  pattern every background job in this app already uses — no new
+  queue/scheduler dependency) runs `reap_stale_guests()` hourly for the
+  life of the process. A failed sweep is swallowed and retried next
+  interval, never crashes the loop.
+
+**Frontend:**
+- `RequireAuth.tsx`/`AuthContext.tsx` needed **zero changes** — they already
+  redirect to `/login` only when `/api/auth/me` fails, and it now never
+  fails. The entire existing route tree (including `Landing.tsx`, the
+  add-repo form) became guest-accessible automatically as a consequence of
+  the backend change alone.
+- `Shell.tsx`'s sidebar user-chip branches on `user.is_guest`: a guest sees
+  "Browsing as guest" + a "Sign in with GitHub" link instead of the
+  avatar/username/sign-out block.
+- `Landing.tsx`: a small hint under the private-repo token field for guests
+  ("Sign in with GitHub to ingest a private repository") — the backend's
+  401 would already surface via the existing error-display path with zero
+  changes, this just avoids a wasted submit-and-fail round trip.
+- `Settings.tsx`: guests see an upsell ("needs a real account — there's
+  nowhere durable to keep a guest's credentials" + a sign-in link) instead
+  of querying `/api/integrations` at all (which would 401 for them).
+- `types.ts`'s `User` gains `is_guest: boolean`; `/api/auth/me`'s response
+  includes it.
+
+**Verified:**
+- Full test suite: 101 passed, same pre-existing unrelated failures.
+- HTTP-level, via a real cookie jar against the running dev backend (not
+  `TestClient` — this needed real session-cookie persistence across
+  requests, which `dependency_overrides` bypasses entirely): first hit to
+  `/api/auth/me` with no cookie returns 200 with a fresh guest (not 401);
+  a second hit with the same cookie returns the identical guest id (not a
+  new one each time); `GET /api/integrations` 401s for that guest;
+  `POST /api/repos` with a `token` 401s for that guest;
+  `POST /api/repos` with no token (a public repo) succeeds and starts a
+  real ingest job, correctly attributed to the guest's `user_id` in
+  `IngestJob` and progressing normally through the pipeline; `/api/status`
+  correctly reads `confluence.configured`/`jira.configured` as `false` for
+  the guest.
+- Direct DB test of the reaper: a synthetic stale guest (backdated
+  `last_active_at`) owning a repo with a symbol, an `IngestJob`, and a
+  `UsageLedger` row — after `reap_stale_guests()`, confirmed the `User`
+  row, the `Repo` row, the `Symbol` row, the `IngestJob` row, and the
+  `UsageLedger` row are ALL gone, while a second, freshly-active synthetic
+  guest was left completely untouched.
+- **Two real bugs caught and fixed during this verification, not found by
+  inspection alone**:
+  1. `_create_guest()`'s synthetic `github_id` was generated as
+     `-random.randint(1, 2**62)` — `users.github_id` is a plain 32-bit
+     Postgres `INTEGER`, not `BIGINT`, and that range overflows it outright
+     (`psycopg.errors.NumericValueOutOfRange`, caught live via a real 500
+     while testing the very first guest request). Fixed to
+     `2**31 - 1` — still ~2.1 billion possible values, comfortably enough
+     entropy for realistic guest volume, and fits the column.
+  2. While restarting the dev backend to pick up code changes mid-session,
+     `uvicorn --reload`'s child worker process kept running (and kept
+     serving pre-edit code) after the PARENT reloader process was killed —
+     `--reload` spawns the actual request-serving worker as a
+     `multiprocessing.spawn` child, and killing just the parent on Windows
+     doesn't clean up that child. Cost real debugging time (stale "Not
+     signed in" responses that looked like the new auto-guest code hadn't
+     taken effect at all) before being traced to the orphaned child PID.
+     Not a code bug — a dev-workflow trap worth remembering: when `--reload`
+     behaves like it isn't picking up an edit, check for an orphaned worker
+     process, not just the process you think you started.
+
+**Explicitly NOT done in this phase:**
+- No frontend UI for a real user to see/manage their own repo list beyond
+  the existing single-active-repo switcher from Phase 2 — a guest's
+  ephemeral repos aren't distinguished from a real user's in that UI at
+  all today, since a guest only ever has their own single session's repos
+  in view anyway.
+- No admin visibility into guest-account volume/reap activity (e.g. how
+  many guests exist right now, how many were reaped last cycle) — the
+  reaper logs nothing beyond swallowing its own failures. Worth adding if
+  guest traffic ever becomes large enough to want to watch.
+- Real per-provider GitHub rate-limit behavior for a flood of anonymous
+  ingests was not stress-tested — unauthenticated GitHub API calls (issue/PR
+  fetching during ingest) are capped at 60 req/hr per source IP; heavy
+  anonymous traffic ingesting many repos from behind the same IP/NAT could
+  hit that ceiling. Not a new problem this phase introduced (it already
+  existed for any unauthenticated ingest), just newly relevant now that
+  ingesting without an account is the intended, encouraged path.
 
 ---
 

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "../lib/useTheme";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 import { LogoMark } from "../components/Logo";
 import type { RepoJob } from "../lib/types";
 import { CompassIcon, FlagIcon, GraphIcon, MapIcon, MoonIcon, SearchIcon, SunIcon, WorkspaceIcon } from "../components/icons";
@@ -49,6 +50,7 @@ function useJob(jobId: string | null, onDone: () => void) {
 export default function Landing() {
   const nav = useNavigate();
   const { isDark, toggle } = useTheme();
+  const { user } = useAuth();
 
   useEffect(() => {
     document.title = "CoderLens — understand any codebase";
@@ -128,15 +130,22 @@ export default function Landing() {
             Private repository?
           </button>
           {showToken && (
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="GitHub PAT (fine-grained or classic with repo access) — used only for the clone, never stored"
-              aria-label="GitHub access token"
-              autoComplete="off"
-              disabled={busy}
-            />
+            <>
+              <input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="GitHub PAT (fine-grained or classic with repo access) — used only for the clone, never stored"
+                aria-label="GitHub access token"
+                autoComplete="off"
+                disabled={busy}
+              />
+              {user?.is_guest && (
+                <div className="lp-msg">
+                  <a href="/api/auth/github/login">Sign in with GitHub</a> to ingest a private repository.
+                </div>
+              )}
+            </>
           )}
         </div>
 

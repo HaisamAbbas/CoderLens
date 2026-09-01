@@ -14,6 +14,8 @@ on Vite (:5173) and proxies to this server; in prod its built bundle (frontend/d
 is served from here, with an SPA fallback so client routes survive a refresh.
 """
 
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -56,6 +58,25 @@ def _reap_orphaned_jobs() -> None:
             )
 
 
+_GUEST_REAP_INTERVAL_SECONDS = 3600  # hourly is plenty next to a 24h+ TTL
+
+
+def _guest_reaper_loop() -> None:
+    """Runs for the lifetime of the process, in its own daemon thread — same
+    plain-threading pattern every background job in this app already uses
+    (no queue/scheduler dependency). Sleeps first so it doesn't race init_db()
+    at startup; a failed sweep (e.g. OpenSearch briefly unreachable) is
+    swallowed and retried next interval rather than killing the loop."""
+    from archaeologist.services import guest_cleanup
+
+    while True:
+        time.sleep(_GUEST_REAP_INTERVAL_SECONDS)
+        try:
+            guest_cleanup.reap_stale_guests()
+        except Exception:  # noqa: BLE001 - best-effort hygiene, never crash the loop
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Creates any tables added to models/entities.py since the DB was last
@@ -63,6 +84,7 @@ async def lifespan(app: FastAPI):
     # since create_all only creates what's missing.
     init_db()
     _reap_orphaned_jobs()
+    threading.Thread(target=_guest_reaper_loop, daemon=True).start()
     yield
 
 

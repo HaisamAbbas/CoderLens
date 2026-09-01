@@ -2,18 +2,44 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { PageLoading, ErrorState } from "../components/PageState";
+import { useAuth } from "../lib/AuthContext";
 import type { ConfluenceIntegration, JiraIntegration } from "../lib/types";
 
 /** Each user's own Confluence/Jira connection (Phase 4 of the multi-user
  *  migration) — these used to be global env vars shared by everyone; now
  *  every user connects their own space/project here. The API token field
  *  is always write-only: a saved token is never sent back, and leaving it
- *  blank on an update keeps whatever was saved before. */
+ *  blank on an update keeps whatever was saved before.
+ *
+ *  Guests (browsing with no account) can't have integration credentials —
+ *  there's no durable identity to attach them to, and the backend 401s
+ *  these routes for a guest on purpose — so this is upsold instead of
+ *  queried for them. */
 export default function Settings() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["integrations"], queryFn: api.integrations });
+  const { user } = useAuth();
+  const q = useQuery({
+    queryKey: ["integrations"], queryFn: api.integrations,
+    enabled: !!user && !user.is_guest,
+  });
 
   useEffect(() => { document.title = "Settings — CoderLens"; }, []);
+
+  if (user?.is_guest) {
+    return (
+      <div className="page">
+        <div className="eyebrow">Settings</div>
+        <h1 className="h1" style={{ marginTop: 6 }}>Integrations</h1>
+        <p className="lede">
+          Connecting a Confluence space or Jira project needs a real account — there's
+          nowhere durable to keep a guest's credentials.
+        </p>
+        <a className="btn primary" href="/api/auth/github/login" style={{ marginTop: 18 }}>
+          Sign in with GitHub
+        </a>
+      </div>
+    );
+  }
 
   if (q.isLoading) return <PageLoading tiles={2} />;
   if (!q.data) return <ErrorState message={q.error instanceof Error ? q.error.message : undefined} onRetry={() => q.refetch()} />;

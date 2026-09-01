@@ -26,9 +26,17 @@ from archaeologist.models.base import Base
 
 class User(Base):
     """A signed-in person, identified by their GitHub account (Phase 1 of the
-    multi-user migration — see the plan for the full phase sequence). Nothing
-    else in the schema references this yet; `Repo.user_id` (Phase 2) is what
-    actually turns this into data isolation."""
+    multi-user migration — see the plan for the full phase sequence).
+    `Repo.user_id` (Phase 2) is what actually turns this into data isolation.
+
+    `is_guest` (browse-public-repos-without-login): a guest gets a real row
+    here too, with a synthetic negative `github_id` (real GitHub ids are
+    always positive, so this can never collide) — every existing per-user
+    ownership/IDOR-safe query already keyed on `user_id` works unmodified for
+    guests, no separate code path needed. `last_active_at` is what
+    services/guest_cleanup.py's reaper uses to know which guest accounts (and
+    everything they own) are stale enough to delete; real accounts never get
+    reaped, so it's only ever set for guests."""
 
     __tablename__ = "users"
 
@@ -37,6 +45,8 @@ class User(Base):
     github_login: Mapped[str] = mapped_column(String(200))
     email: Mapped[str | None] = mapped_column(String(300))
     avatar_url: Mapped[str | None] = mapped_column(String(500))
+    is_guest: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
