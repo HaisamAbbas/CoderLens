@@ -14,14 +14,16 @@ on Vite (:5173) and proxies to this server; in prod its built bundle (frontend/d
 is served from here, with an SPA fallback so client routes survive a refresh.
 """
 
+import logging
 import threading
 import time
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -122,6 +124,25 @@ app.include_router(auth.router)
 app.include_router(api.router)
 app.include_router(codemap.router)
 app.include_router(integrations.router)
+
+_logger = logging.getLogger("archaeologist")
+
+
+@app.exception_handler(Exception)
+async def _log_unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    """Starlette's default handler for an uncaught exception returns a bare
+    "Internal Server Error" with the traceback nowhere the client can see it —
+    correct for security, but that same traceback needs to land SOMEWHERE, and
+    without this it silently goes to whatever `raise` unwound to, which isn't
+    guaranteed to be logged at all. This is deliberately registered for the
+    broad `Exception` class: FastAPI still resolves the more specific
+    HTTPException handler first for routes that raise it on purpose (401s,
+    404s, etc.) — this only ever fires for a truly unhandled crash."""
+    _logger.error(
+        "Unhandled exception on %s %s:\n%s",
+        request.method, request.url.path, traceback.format_exc(),
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 
 @app.get("/api", tags=["meta"])
