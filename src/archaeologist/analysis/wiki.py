@@ -1,9 +1,15 @@
 """DeepWiki-style "Start here" — page structure and count are decided by the
 LLM per repo (DeepWiki's actual approach: 4-9 pages, topics chosen to fit this
 specific codebase) instead of a fixed list of headings. The LLM can only pick
-from a menu of REAL, already-computed focuses (architecture, getting started,
-core engine, pipeline, one per detected subsystem/community) — it never
-invents a topic with no real data behind it.
+from a menu of REAL, already-computed focuses (architecture, API surface, data
+model, getting started, core engine, pipeline, one per detected subsystem/
+community) — it never invents a topic with no real data behind it. Several of
+these only appear when the repo actually has that shape: API surface needs
+real route-registration decorators, data model needs real ORM/schema base
+classes — a CLI tool or a plain library simply won't get those pages, rather
+than getting a wrong or invented one. This is what makes two differently-
+shaped repos (a web API vs. a CLI tool vs. a library) produce genuinely
+different wikis, not the same skeleton with different words filled in.
 
 Each page is assembled as a sequence of SECTIONS (heading → prose → artifact),
 mirroring how a real DeepWiki article reads. The hard facts — diagrams, tables,
@@ -25,6 +31,7 @@ pre-computed facts, never the DB session), so they're fanned out concurrently
 with a thread pool — a page with a dozen sections still generates in seconds.
 """
 
+import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -57,7 +64,58 @@ _EXT_LANG = {
     "json": "json", "html": "html", "css": "css", "scss": "css", "toml": "ini", "ini": "ini",
 }
 MAX_SUBSYSTEM_PAGES = 5  # bounded so the sidebar stays scannable even on a big repo
-DEFAULT_ORDER = ["architecture", "getting_started", "core_engine", "pipeline"]
+DEFAULT_ORDER = ["architecture", "api_surface", "data_model", "getting_started", "core_engine", "pipeline"]
+
+# ---------- structural pattern detection (mechanical, never LLM-guessed) ----------
+# Same discipline as analysis/codemap.py's classify_role: matches real, visible
+# syntax (a decorator, a base class) — never infers from naming conventions or
+# invents structure the source doesn't actually show.
+
+_ROUTE_METHOD_DECORATOR_RE = re.compile(r'@\w+\.(get|post|put|delete|patch|head|options)\(\s*["\']([^"\']*)["\']')
+_ROUTE_GENERIC_DECORATOR_RE = re.compile(r'@\w+\.route\(\s*["\']([^"\']*)["\']([^)]*)\)')
+_ROUTE_METHODS_KW_RE = re.compile(r'methods\s*=\s*\[([^\]]*)\]')
+
+
+def _detect_route(code: str) -> tuple[str, str] | None:
+    """(HTTP method(s), path) for a function/method whose decorator registers
+    an HTTP route — FastAPI/Starlette (@x.get/post/...) and Flask
+    (@x.route(path, methods=[...])) shapes. Scans only the decorator lines
+    (everything before the def), never the body — a route detected this way
+    is never a guess, it's the literal decorator the framework itself reads
+    to register it. A repo using a different registration style (Express-like
+    plain calls, Django urls.py) just won't be detected — no page rather than
+    a wrong one."""
+    head = code.split("def ", 1)[0]
+    m = _ROUTE_METHOD_DECORATOR_RE.search(head)
+    if m:
+        return m.group(1).upper(), m.group(2)
+    m = _ROUTE_GENERIC_DECORATOR_RE.search(head)
+    if m:
+        path = m.group(1)
+        mm = _ROUTE_METHODS_KW_RE.search(m.group(2))
+        methods = ", ".join(x.strip(" '\"") for x in mm.group(1).split(",")) if mm else "GET"
+        return methods, path
+    return None
+
+
+_MODEL_BASE_RE = re.compile(r'class\s+\w+\s*\(\s*([^)]*)\)')
+
+
+def _detect_model_base(code: str) -> str | None:
+    """The real base-class text if this class looks like an ORM/schema model
+    — SQLAlchemy (...Base), Pydantic (BaseModel), Django (models.Model / db.Model),
+    or a plain @dataclass. Matched by the actual base-class name in the source,
+    never by guessing from the class's own name."""
+    if "@dataclass" in code.split("class ", 1)[0]:
+        return "dataclass"
+    m = _MODEL_BASE_RE.search(code[:400])
+    if not m:
+        return None
+    for b in (x.strip() for x in m.group(1).split(",")):
+        base_name = b.split(".")[-1]  # models.Model / db.Model -> Model
+        if base_name in ("Base", "BaseModel", "Model") or base_name.endswith(("Base", "Model")):
+            return b
+    return None
 
 
 # ---------- generic helpers ----------
@@ -414,6 +472,82 @@ def _focus_core_engine(files_by_path: dict[str, File], start_sym: Symbol | None,
     return sections, summary
 
 
+def _focus_api_surface(syms: dict[int, Symbol], files_by_path: dict[str, File]):
+    """Real HTTP routes, detected from the actual route-registration decorator
+    each handler carries (see _detect_route) — never inferred from naming.
+    A repo with no such decorators anywhere (a library, a CLI tool, a repo
+    that registers routes some other way) simply gets no page at all."""
+    routes: list[tuple[str, str, Symbol]] = []
+    for s in syms.values():
+        if s.kind not in ("function", "method") or not s.code:
+            continue
+        detected = _detect_route(s.code)
+        if detected is None:
+            continue
+        routes.append((*detected, s))
+    if not routes:
+        return None, None
+    routes.sort(key=lambda r: (r[1], r[0]))
+    routes = routes[:40]  # bounded so a huge API doesn't blow the page up
+
+    facts = ("Real HTTP routes, detected from the actual route-registration decorator each handler "
+             "carries: " + "; ".join(f"{m} {p} -> {s.qualified_name}" for m, p, s in routes[:20]))
+    rows = [[m, p, s.qualified_name] for m, p, s in routes]
+    sections = [{"heading": None, "facts": facts,
+                "blocks": [_table(["Method", "Path", "Handler"], rows)]}]
+
+    top = routes[0][2]
+    sections.append({
+        "heading": "Example handler",
+        "facts": f"One representative handler: {top.qualified_name} at {top.file_path}:{top.start_line}.",
+        "blocks": [_chips([_symbol_chip(top)]), _code_snippet(files_by_path, top)],
+    })
+    summary = f"{len(routes)} HTTP route(s) detected: " + "; ".join(f"{m} {p}" for m, p, _ in routes[:10])
+    return sections, summary
+
+
+def _focus_data_model(syms: dict[int, Symbol], files_by_path: dict[str, File]):
+    """Real ORM/schema classes, detected from their actual base class (see
+    _detect_model_base) — SQLAlchemy, Pydantic, Django, or plain dataclasses.
+    "Mentions" is a real textual signal (another detected model's class name
+    appears in this one's source), not a parsed foreign key — honestly
+    labeled as such rather than overclaiming a relationship that wasn't
+    actually parsed out of the field definitions."""
+    models: list[tuple[Symbol, str]] = []
+    for s in syms.values():
+        if s.kind != "class" or not s.code:
+            continue
+        base = _detect_model_base(s.code)
+        if base:
+            models.append((s, base))
+    if not models:
+        return None, None
+    models.sort(key=lambda m: m[0].qualified_name)
+    models = models[:30]
+
+    model_names = {s.name for s, _ in models}
+
+    def mentions(s: Symbol) -> str:
+        found = sorted({n for n in model_names if n != s.name and n in s.code})
+        return ", ".join(found) or "—"
+
+    facts = ("Real data-model classes, detected from their actual base class (SQLAlchemy/Pydantic/"
+             "Django/dataclass patterns): "
+             + "; ".join(f"{s.qualified_name} ({base})" for s, base in models[:15]))
+    rows = [[s.name, base, mentions(s)] for s, base in models]
+    sections = [{"heading": None, "facts": facts,
+                "blocks": [_table(["Model", "Base", "Mentions"], rows)]}]
+
+    top = models[0][0]
+    sections.append({
+        "heading": "Example model",
+        "facts": f"One representative model: {top.qualified_name} at {top.file_path}:{top.start_line}.",
+        "blocks": [_chips([_symbol_chip(top)]), _code_snippet(files_by_path, top)],
+    })
+    summary = f"{len(models)} data-model class(es) detected: " + "; ".join(s.qualified_name for s, _ in models[:10])
+    return sections, summary
+
+
 def _focus_pipeline(session: Session, files_by_path: dict[str, File], root_sym: Symbol | None,
                     package: str, repo_name: str, in_pkg, used: set[int]):
     if root_sym is None:
@@ -641,6 +775,10 @@ def build_wiki(session: Session, repo_id: int, repo_name: str, user_id: int | No
 
     register("architecture", "System Architecture", "How the codebase is organized into submodules",
              _focus_architecture(repo_name, arch, eps))
+    register("api_surface", "API Surface", "Real HTTP routes, detected from their registration decorators",
+             _focus_api_surface(syms, files_by_path))
+    register("data_model", "Data Model", "Real ORM/schema classes, detected from their base class",
+             _focus_data_model(syms, files_by_path))
     register("getting_started", "Getting Started", "How to set up and run this project",
              _focus_getting_started(session, repo_id, eps))
     register("core_engine", "Core Engine", "The abstractions the rest of the system is built on",
