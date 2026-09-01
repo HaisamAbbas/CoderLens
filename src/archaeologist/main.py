@@ -26,7 +26,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from archaeologist import __version__
 from archaeologist.config import settings
 from archaeologist.models.db import init_db
-from archaeologist.routers import api, auth, codemap, health
+from archaeologist.routers import api, auth, codemap, health, integrations
 
 
 def _reap_orphaned_jobs() -> None:
@@ -99,6 +99,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(api.router)
 app.include_router(codemap.router)
+app.include_router(integrations.router)
 
 
 @app.get("/api", tags=["meta"])

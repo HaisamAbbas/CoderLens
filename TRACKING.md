@@ -16,7 +16,7 @@ is gitignored; this file is not.
 | 1 | Auth foundation (GitHub OAuth + sessions) | **Done, verified except real GitHub round-trip** |
 | 2 | Per-user repo ownership + IDOR fixes | **Done, verified** |
 | 3 | OpenSearch isolation | **Done, verified — scope expanded beyond the plan, see below** |
-| 4 | Per-user integration credentials (Confluence/Jira) | Not started |
+| 4 | Per-user integration credentials (Confluence/Jira) | **Done, verified except a real Confluence/Jira round-trip** |
 | 5 | Shared, metered LLM/embedding budget | Not started |
 
 ---
@@ -185,6 +185,106 @@ pre-existing bugs — both fixed here, not deferred:
   with the old signature — will need a `repo_id` argument added the next
   time that notebook is actually re-run (notebooks are point-in-time
   validation snapshots, not live app code, per the project's own convention).
+
+---
+
+## Phase 4 — Per-user integration credentials (Confluence/Jira)
+
+Replaces the old global `CONFLUENCE_*`/`JIRA_*` env vars (one operator-
+configured account shared by everyone) with per-user, encrypted-at-rest
+credentials — this is the actual feature the "how would other users publish
+their own docs" question earlier in the migration was asking for.
+
+**Schema:**
+- New `UserIntegration` table (`user_id` unique FK to `users`): confluence
+  base_url/email/space_key + `confluence_api_token_encrypted`, jira
+  base_url/email/project_key/issue_type + `jira_api_token_encrypted`.
+  API tokens only — never the base_url/email/space_key/project_key, which
+  aren't secret and are shown back to the user in Settings.
+
+**Encryption:**
+- New `src/archaeologist/security.py` — `encrypt()`/`decrypt()` via
+  `cryptography`'s `Fernet` (AES + HMAC), keyed by a new
+  `CREDENTIALS_ENCRYPTION_KEY` setting (one operator-held key, not
+  per-user — the threat model is "don't leave tokens in plaintext in
+  Postgres," not key-per-tenant isolation). New `cryptography>=42`
+  dependency. A local dev key was generated and added to `.env` (gitignored);
+  **production needs its own, separately generated** — do not reuse the dev
+  value (same rule as `SESSION_SECRET` from Phase 1).
+
+**Backend:**
+- New `src/archaeologist/services/user_integrations.py` — `get()`,
+  `confluence_configured()`/`jira_configured()`, `confluence_credentials()`/
+  `jira_credentials()` (decrypted, ready to use), `upsert_confluence()`/
+  `upsert_jira()` (a blank `api_token` on an update means "keep the existing
+  one," never "clear it" — the frontend never has to see or re-send a saved
+  token to change other fields), `clear_confluence()`/`clear_jira()`.
+- `services/confluence_client.py` / `services/jira_client.py` — `open_client()`
+  now takes `(base_url, email, api_token)` explicitly instead of reading
+  global `settings`. Error messages updated to point at Settings instead of
+  env var names.
+- `services/confluence_publish.py::publish_wiki()` takes a `credentials`
+  dict (from `user_integrations.confluence_credentials()`) instead of
+  reading `settings.confluence_space_key`. `confluence_render_diagrams`/
+  `confluence_mermaid_ink_url` stay global settings — they're operator-level
+  rendering config, not a per-user credential.
+- `services/confluence_job.py` / `services/jira_ticket.py` — resolve the
+  owning user via `Repo.user_id` (already available from Phase 2 — no new
+  `user_id` column needed on the job tables) and look up that user's
+  credentials before publishing/ticketing; raise a clear error ("...set it
+  up in Settings") if not connected.
+- `routers/api.py`: `/api/confluence/publish` and `/api/jira/tickets` now
+  400 with a clear message if the CALLER (not a global operator flag) hasn't
+  connected the relevant integration. `/api/status`'s `confluence.configured`/
+  `jira.configured` are now per-user — this required a new
+  `get_current_user_optional`/`OptionalUser` dependency in `auth.py` (returns
+  `None` instead of 401) since `/api/status`'s LLM/embedding info must stay
+  reachable logged-out, but confluence/jira gating needed to become
+  per-user without breaking that.
+- New `routers/integrations.py` (`GET/PUT/DELETE /api/integrations/confluence`,
+  same for `/jira`) — `GET` never returns a token, only a `has_token` boolean.
+
+**Frontend:**
+- New `frontend/src/pages/Settings.tsx` — two cards (Confluence, Jira), each
+  with its own form, a "Connected"/"Not connected" badge, Save/Disconnect.
+  Token field is `type="password"`, always starts blank, with a placeholder
+  telling the user blank means "keep the current one." Saving invalidates
+  both `["integrations"]` and `["status"]` so the Confluence/Jira buttons
+  elsewhere in the app (Tour, Bug Hunter) update immediately.
+- `Shell.tsx` gets a "Settings" nav entry (new `GearIcon`, sourced from the
+  same Google Material Icons set as every other icon in the app).
+- `lib/api.ts` gets a new `put()` helper (the app previously only had
+  `get`/`post`/`del`) plus `integrations()`/`putConfluenceIntegration()`/
+  `deleteConfluenceIntegration()`/`putJiraIntegration()`/`deleteJiraIntegration()`.
+
+**Verified:**
+- Full test suite: 101 passed, same 7 pre-existing unrelated failures.
+  `tests/test_confluence.py`'s `publish_wiki` test updated for the new
+  `credentials` parameter and `open_client(base_url, email, api_token)`
+  signature.
+- Direct test: `encrypt()`/`decrypt()` round-trip; two synthetic users each
+  with their own Confluence/Jira credentials — confirmed user2 sees zero
+  trace of user1's integration via `user_integrations.get()`; confirmed a
+  blank `api_token` on a second `upsert_confluence()` call keeps the
+  original token while other fields still update.
+- HTTP-level test via `TestClient`/`dependency_overrides`: `GET /api/integrations`
+  never includes `api_token` in the response (`has_token` boolean only);
+  `PUT /api/integrations/confluence` then `GET` reflects the saved
+  non-secret fields; `/api/status` correctly reports `confluence.configured`
+  per-user (required overriding `get_current_user_optional`, not
+  `get_current_user`, in the test — a reminder that `/api/status` uses a
+  different dependency than every other route).
+- `frontend`: `tsc --noEmit` clean.
+
+**Explicitly NOT done in this phase:**
+- No real Confluence/Jira account was connected end-to-end (no such account
+  available in this environment) — the actual external API calls
+  (`create_page`/`create_issue`/etc.) are unchanged from before this phase
+  and were already covered by `test_confluence.py`'s `httpx.MockTransport`
+  tests; only the credential *plumbing* (where they come from) changed here.
+- Old `.env` values for `CONFLUENCE_*`/`JIRA_*` are now silently ignored
+  (pydantic-settings `extra="ignore"`) rather than erroring — harmless, but
+  worth knowing if a stale `.env` still has them.
 
 ---
 

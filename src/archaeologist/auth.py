@@ -27,3 +27,21 @@ def get_current_user(request: Request) -> User:
 
 
 CurrentUser = Depends(get_current_user)
+
+
+def get_current_user_optional(request: Request) -> User | None:
+    """Same lookup as get_current_user, but returns None instead of 401 —
+    for routes that work logged out (e.g. /api/status's provider info) but
+    also want to report per-user state when a session IS present."""
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        return None
+    with session_scope() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            return None
+        session.expunge(user)
+        return user
+
+
+OptionalUser = Depends(get_current_user_optional)

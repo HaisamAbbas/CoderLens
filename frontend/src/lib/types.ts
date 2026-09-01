@@ -15,6 +15,15 @@ export interface Status {
   jira?: { configured: boolean };
 }
 
+export interface ConfluenceIntegration {
+  configured: boolean; base_url: string; email: string; space_key: string; has_token: boolean;
+}
+export interface JiraIntegration {
+  configured: boolean; base_url: string; email: string; project_key: string;
+  issue_type: string; has_token: boolean;
+}
+export interface Integrations { confluence: ConfluenceIntegration; jira: JiraIntegration; }
+
 export interface ConfluenceResult {
   key: string; title: string; status: "ok" | "error"; url?: string; error?: string;
 }

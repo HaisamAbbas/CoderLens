@@ -8,13 +8,15 @@ id.atlassian.com/manage-profile/security/api-tokens.
 `base_url` includes the /wiki context path (e.g.
 https://your-domain.atlassian.net/wiki), so every request path here is
 relative to it, exactly as Atlassian's docs show for Cloud.
+
+Credentials are passed in explicitly (Phase 4 of the multi-user migration —
+each user brings their own, decrypted from services/user_integrations.py),
+never read from global settings.
 """
 
 from dataclasses import dataclass
 
 import httpx
-
-from archaeologist.config import settings
 
 
 @dataclass
@@ -25,13 +27,8 @@ class ConfluencePage:
     url: str
 
 
-def open_client() -> httpx.Client:
-    s = settings
-    return httpx.Client(
-        auth=(s.confluence_email, s.confluence_api_token),
-        base_url=s.confluence_base_url,
-        timeout=30.0,
-    )
+def open_client(base_url: str, email: str, api_token: str) -> httpx.Client:
+    return httpx.Client(auth=(email, api_token), base_url=base_url, timeout=30.0)
 
 
 def _page_url(client: httpx.Client, body: dict) -> str:
@@ -43,13 +40,12 @@ def _check(resp: httpx.Response) -> None:
     if resp.status_code in (401, 403):
         raise RuntimeError(
             f"Confluence rejected the credentials ({resp.status_code}). "
-            "Check CONFLUENCE_EMAIL / CONFLUENCE_API_TOKEN and that the token "
-            "has not expired."
+            "Check your email/API token in Settings and that the token has not expired."
         )
     if resp.status_code == 404:
         raise RuntimeError(
-            "Confluence returned 404 — check CONFLUENCE_BASE_URL (must include "
-            "the /wiki context path) and CONFLUENCE_SPACE_KEY."
+            "Confluence returned 404 — check your base URL (must include the "
+            "/wiki context path) and space key in Settings."
         )
     resp.raise_for_status()
 

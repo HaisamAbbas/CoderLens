@@ -18,6 +18,7 @@ import DeadCode from "./pages/DeadCode";
 import Communities from "./pages/Communities";
 import ArchDelta from "./pages/ArchDelta";
 import Weaknesses from "./pages/Weaknesses";
+import Settings from "./pages/Settings";
 
 export default function App() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/weaknesses" element={<Weaknesses />} />
           <Route path="/communities" element={<Communities />} />
           <Route path="/arch-delta" element={<ArchDelta />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Route>

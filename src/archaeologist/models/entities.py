@@ -323,3 +323,34 @@ class JiraTicketJob(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
+
+
+class UserIntegration(Base):
+    """One user's own Confluence/Jira credentials (Phase 4 of the multi-user
+    migration) — these used to be global CONFLUENCE_*/JIRA_* env vars shared
+    by everyone; now each user brings their own, so publishing/ticketing
+    lands in THEIR space/project, not an operator-configured shared one.
+
+    API tokens are stored encrypted (see security.py) — never in plaintext,
+    never sent back to the frontend once saved."""
+
+    __tablename__ = "user_integrations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+
+    confluence_base_url: Mapped[str] = mapped_column(String(500), default="")
+    confluence_email: Mapped[str] = mapped_column(String(300), default="")
+    confluence_api_token_encrypted: Mapped[str] = mapped_column(Text, default="")
+    confluence_space_key: Mapped[str] = mapped_column(String(50), default="")
+
+    jira_base_url: Mapped[str] = mapped_column(String(500), default="")
+    jira_email: Mapped[str] = mapped_column(String(300), default="")
+    jira_api_token_encrypted: Mapped[str] = mapped_column(Text, default="")
+    jira_project_key: Mapped[str] = mapped_column(String(50), default="")
+    jira_issue_type: Mapped[str] = mapped_column(String(50), default="Task")
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

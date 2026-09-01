@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from archaeologist.agent.graph import investigate_stream
-from archaeologist.auth import CurrentUser
+from archaeologist.auth import CurrentUser, OptionalUser
 from archaeologist.config import settings
 from archaeologist.indexing.opensearch_client import get_client
 from archaeologist.ingestion.repository import normalize_repo_url
@@ -95,12 +95,16 @@ def _count(session, model, repo_id) -> int:
 
 
 @router.get("/status")
-def status() -> dict:
+def status(user: User | None = OptionalUser) -> dict:
     """Runtime capabilities — which LLM/embedding providers are active. Lets the
     UI show that the app works without any API key (local Ollama / offline).
-    Server-wide config, not user data — deliberately not gated behind login."""
+    The LLM/embedding info is server-wide config, not user data, and stays
+    open (matching `/health`) — but confluence/jira "configured" now reflects
+    THIS user's own connected integrations (Phase 4), so it's false when
+    logged out rather than 401ing the whole endpoint."""
     from archaeologist.rag.llm import active_model, llm_available, resolve_provider
     from archaeologist.retrieval.embeddings import get_embedder
+    from archaeologist.services import user_integrations
 
     embedder = None
     try:
@@ -108,6 +112,14 @@ def status() -> dict:
     except Exception:  # noqa: BLE001 - embeddings are optional (BM25-only)
         pass
     embedding_provider = settings.embedding_provider
+
+    confluence_ok, jira_ok = False, False
+    if user is not None:
+        with session_scope() as s:
+            integ = user_integrations.get(s, user.id)
+            confluence_ok = user_integrations.confluence_configured(integ)
+            jira_ok = user_integrations.jira_configured(integ)
+
     return {
         "llm": {
             "provider": resolve_provider(),
@@ -121,10 +133,10 @@ def status() -> dict:
             "active": embedder is not None,
         },
         # Whether the wiki-publish feature should be offered at all — the UI
-        # hides the Confluence entry point unless all four settings are set.
-        "confluence": {"configured": settings.confluence_configured},
+        # hides the Confluence entry point unless THIS user has connected one.
+        "confluence": {"configured": confluence_ok},
         # Same gating for the weaknesses → Jira flow.
-        "jira": {"configured": settings.jira_configured},
+        "jira": {"configured": jira_ok},
     }
 
 
@@ -735,10 +747,11 @@ def publish_confluence(body: PublishConfluenceBody, user: User = CurrentUser) ->
     """Publish the reviewed wiki sections to Confluence as a tracked background
     job. Nothing is sent until this endpoint fires — the UI collects explicit
     user approval (section checklist) before calling it."""
-    if not settings.confluence_configured:
-        raise HTTPException(400, "Confluence is not configured — set CONFLUENCE_* in .env.")
-    from archaeologist.services import confluence_job
+    from archaeologist.services import confluence_job, user_integrations
     with session_scope() as s:
+        integ = user_integrations.get(s, user.id)
+        if not user_integrations.confluence_configured(integ):
+            raise HTTPException(400, "Confluence is not connected — set it up in Settings.")
         r = _repo(s, user)
         if not r.wiki_cache:
             raise HTTPException(
@@ -892,12 +905,13 @@ def create_jira_tickets(body: CreateJiraTicketsBody, user: User = CurrentUser) -
     """Create Jira issues for the approved findings as a tracked background job.
     Nothing reaches Jira until this fires — the UI collects explicit approval
     via checkboxes first."""
-    if not settings.jira_configured:
-        raise HTTPException(400, "Jira is not configured — set JIRA_* in .env.")
     if not body.finding_ids:
         raise HTTPException(422, "Select at least one finding.")
-    from archaeologist.services import jira_ticket
+    from archaeologist.services import jira_ticket, user_integrations
     with session_scope() as s:
+        integ = user_integrations.get(s, user.id)
+        if not user_integrations.jira_configured(integ):
+            raise HTTPException(400, "Jira is not connected — set it up in Settings.")
         repo_id = _repo(s, user).id
     job = jira_ticket.start_tickets(repo_id, body.finding_ids)
     return {"job_id": job["id"], "status": job["status"]}

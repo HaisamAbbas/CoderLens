@@ -2,7 +2,7 @@ import type {
   ArchDelta, ArchRefs,
   Architecture, AskResult, Codemap, CodemapEdge, CodemapNode, Communities, ConfluenceJob,
   ConversationDetail, ConversationKind, ConversationSummary, Coupling, DeadCode, Entrypoint,
-  FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, InvestigateResult,
+  FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, Integrations, InvestigateResult,
   JiraTicketJob, Overview, Repo, RepoJob, SearchResponse, SimulationTrace, Status, Stream,
   StreamEvent, SymbolDetail, SymbolIndexEntry, TreeFile, User, WeaknessList, WeaknessScanJob, Wiki,
 } from "./types";
@@ -19,6 +19,17 @@ async function get<T>(url: string): Promise<T> {
 async function post<T>(url: string, body: unknown): Promise<T> {
   const r = await fetch(url, {
     method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await errText(r));
+  return r.json() as Promise<T>;
+}
+
+async function put<T>(url: string, body: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method: "PUT",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -106,6 +117,14 @@ export const api = {
   jiraJob: (jobId: string) => get<JiraTicketJob>(`/api/jira/jobs/${jobId}`),
   me: () => get<User>("/api/auth/me"),
   logout: () => post<{ ok: boolean }>("/api/auth/logout", {}),
+  integrations: () => get<Integrations>("/api/integrations"),
+  putConfluenceIntegration: (body: { base_url: string; email: string; api_token?: string; space_key: string }) =>
+    put<{ ok: boolean }>("/api/integrations/confluence", body),
+  deleteConfluenceIntegration: () => del("/api/integrations/confluence"),
+  putJiraIntegration: (body: {
+    base_url: string; email: string; api_token?: string; project_key: string; issue_type?: string;
+  }) => put<{ ok: boolean }>("/api/integrations/jira", body),
+  deleteJiraIntegration: () => del("/api/integrations/jira"),
 };
 
 /**

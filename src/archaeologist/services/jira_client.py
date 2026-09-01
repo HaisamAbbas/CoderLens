@@ -2,8 +2,11 @@
 
 Mirrors `services/confluence_client.py`: small httpx client with plain
 functions and a clear RuntimeError on auth failures. Same Basic(email, API
-token) scheme as Confluence — but settings fields are independent, so each
-feature must be configured on its own.
+token) scheme as Confluence — but credentials are independent per feature,
+so each must be configured on its own.
+
+Credentials are passed in explicitly (Phase 4 of the multi-user migration —
+each user brings their own), never read from global settings.
 
 Two Jira-specific wrinkles:
 - base_url has NO /wiki path segment (unlike Confluence's).
@@ -12,28 +15,21 @@ Two Jira-specific wrinkles:
 
 import httpx
 
-from archaeologist.config import settings
 
-
-def open_client() -> httpx.Client:
-    s = settings
-    return httpx.Client(
-        auth=(s.jira_email, s.jira_api_token),
-        base_url=s.jira_base_url,
-        timeout=30.0,
-    )
+def open_client(base_url: str, email: str, api_token: str) -> httpx.Client:
+    return httpx.Client(auth=(email, api_token), base_url=base_url, timeout=30.0)
 
 
 def _check(resp: httpx.Response) -> None:
     if resp.status_code in (401, 403):
         raise RuntimeError(
             f"Jira rejected the credentials ({resp.status_code}). "
-            "Check JIRA_EMAIL / JIRA_API_TOKEN and that the token has not expired."
+            "Check your email/API token in Settings and that the token has not expired."
         )
     if resp.status_code == 404:
         raise RuntimeError(
-            "Jira returned 404 — check JIRA_BASE_URL (no /wiki path) and "
-            "JIRA_PROJECT_KEY."
+            "Jira returned 404 — check your base URL (no /wiki path) and "
+            "project key in Settings."
         )
     resp.raise_for_status()
 
