@@ -24,11 +24,35 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from archaeologist.models.base import Base
 
 
-class Repo(Base):
-    __tablename__ = "repos"
+class User(Base):
+    """A signed-in person, identified by their GitHub account (Phase 1 of the
+    multi-user migration — see the plan for the full phase sequence). Nothing
+    else in the schema references this yet; `Repo.user_id` (Phase 2) is what
+    actually turns this into data isolation."""
+
+    __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    url: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    github_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    github_login: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(300))
+    avatar_url: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class Repo(Base):
+    __tablename__ = "repos"
+    # Was `url` unique=True — a single global repo table with no owner. Now
+    # scoped per-user so two different users can each independently ingest
+    # the same public URL (e.g. both exploring pallets/flask) without
+    # colliding on one shared row.
+    __table_args__ = (UniqueConstraint("user_id", "url", name="uq_repo_user_url"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    url: Mapped[str] = mapped_column(String(500), index=True)
     name: Mapped[str] = mapped_column(String(200))
     default_branch: Mapped[str | None] = mapped_column(String(200))
     head_sha: Mapped[str | None] = mapped_column(String(40))
@@ -196,6 +220,9 @@ class IngestJob(Base):
     __tablename__ = "ingest_jobs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # No repo_id — a Repo row doesn't exist yet when this job starts. user_id
+    # is the only ownership anchor available until the ingest completes.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     repo_url: Mapped[str] = mapped_column(String(500), index=True)
     status: Mapped[str] = mapped_column(String(20), default="running", index=True)  # running | done | error
     step: Mapped[str] = mapped_column(String(50), default="")

@@ -30,11 +30,28 @@ class Settings(BaseSettings):
     # `pip install`-ed (main.py then lives under site-packages, nowhere near
     # the actual frontend/ directory). A real deployment must set this.
     frontend_dist: str = Field(default="")
+    # Where to send the browser after a successful login. Blank (prod default)
+    # redirects to "/" on this same origin, since the built frontend is served
+    # from here (see the SPA fallback below) — only needed in dev, where the
+    # Vite dev server runs on a different port than this API.
+    frontend_base_url: str = Field(default="")
+
+    # --- Auth (Phase 1 of the multi-user migration) ---
+    # A new GitHub OAuth App (github.com/settings/developers → OAuth Apps —
+    # distinct from a personal access token), with its callback URL set to
+    # {this app's base URL}/api/auth/github/callback.
+    github_oauth_client_id: str = Field(default="")
+    github_oauth_client_secret: str = Field(default="")
+    # Signs the session cookie (Starlette's SessionMiddleware, itsdangerous —
+    # no new dependency). Any long random string; rotating it logs everyone
+    # out at once (no server-side session store to selectively revoke from).
+    session_secret: str = Field(default="")
 
     # --- LLM (reasoning / agent) — pluggable provider ---
     # "auto" (default): use a hosted key if one is set, else a local Ollama model
     # (no API key, no cost), else run in offline retrieval-only mode. Explicit
-    # choices: "gemini" | "anthropic" | "openrouter" | "alibaba" | "aihubmix" | "ollama".
+    # choices: "gemini" | "anthropic" | "openrouter" | "alibaba" | "aihubmix" |
+    # "zai" | "ollama".
     llm_provider: str = Field(default="auto")
     gemini_api_key: str = Field(default="")
     gemini_model: str = Field(default="gemini-2.5-flash")
@@ -59,6 +76,11 @@ class Settings(BaseSettings):
     # minimax-m3-free — confirmed live: genuinely free (input/output/cache_read
     # all $0 in AIHubMix's own catalog), 1M+ context, reasoning + long-context.
     aihubmix_model: str = Field(default="minimax-m3-free")
+    # Z.AI (Zhipu) direct API, not the aihubmix proxy — cheapest real GLM
+    # tier ($0.075/$0.25 per M in/out, confirmed live). Always reasons (cannot
+    # be disabled per Z.AI's own docs); see _call_zai for the mitigation.
+    zai_api_key: str = Field(default="")
+    zai_model: str = Field(default="glm-5.3-flash")
     # Local, API-key-free LLM served by Ollama (docker compose up -d; the first
     # boot pulls the model, ~5 GB). Any OpenAI-style endpoint also works.
     ollama_base_url: str = Field(default="http://localhost:11434")

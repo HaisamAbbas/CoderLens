@@ -21,11 +21,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from archaeologist import __version__
 from archaeologist.config import settings
 from archaeologist.models.db import init_db
-from archaeologist.routers import api, codemap, health
+from archaeologist.routers import api, auth, codemap, health
 
 
 def _reap_orphaned_jobs() -> None:
@@ -72,19 +73,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Session cookie for auth (Phase 1 of the multi-user migration) — itsdangerous-
+# signed, holds only {"user_id": int}, no server-side session store. Added
+# before CORS so CORS stays the outermost middleware (its headers must reach
+# even error responses raised inside session-dependent routes).
+app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, same_site="lax")
+
 # Dev: allow the Vite dev server to call the API cross-origin. In prod the
 # built frontend is served from this same app (see the SPA fallback below),
 # so no extra origin is needed there — CORS_ORIGINS only matters if the
 # frontend is ever deployed as a separate static site instead.
+# allow_credentials=True lets the session cookie ride along on cross-origin
+# dev requests — safe here since allow_origins is always an explicit list,
+# never "*" (the two can't be combined).
 _extra_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", *_extra_origins],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(api.router)
 app.include_router(codemap.router)
 
