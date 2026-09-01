@@ -85,6 +85,13 @@ export default function Tour() {
   const [publishOpen, setPublishOpen] = useState(false);
 
   const openChip = (c: WikiChip) => nav("/reader", { state: { path: c.path, line: c.line } });
+  // Always offered — a user with no Confluence connected yet gets sent to
+  // Settings (with that card called out) instead of never seeing the button
+  // at all, so publishing is discoverable before it's usable.
+  const clickPublish = () => {
+    if (statusQ.data?.confluence?.configured) setPublishOpen(true);
+    else nav("/settings", { state: { highlight: "confluence", reason: "publish" } });
+  };
 
   if (wikiQ.isLoading) {
     return (
@@ -128,11 +135,9 @@ export default function Tour() {
     <div className="page wk">
       <div className="eyebrow" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <span>Start here · {wikiQ.data.repo}</span>
-        {statusQ.data?.confluence?.configured && (
-          <button className="btn" onClick={() => setPublishOpen(true)}>
-            Publish to Confluence
-          </button>
-        )}
+        <button className="btn" onClick={clickPublish}>
+          Publish to Confluence
+        </button>
       </div>
       <h1 className="h1">{sec.title}</h1>
       <p className="lede">{sec.subtitle}</p>

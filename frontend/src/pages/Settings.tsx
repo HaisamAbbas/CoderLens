@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { PageLoading, ErrorState } from "../components/PageState";
+import { SparkleIcon } from "../components/icons";
 import { useAuth } from "../lib/AuthContext";
 import type { ConfluenceIntegration, GithubIntegration, JiraIntegration } from "../lib/types";
 
@@ -18,6 +20,13 @@ import type { ConfluenceIntegration, GithubIntegration, JiraIntegration } from "
 export default function Settings() {
   const qc = useQueryClient();
   const { user } = useAuth();
+  const loc = useLocation();
+  // "Publish to Confluence" (and, in future, similar entry points) can send
+  // you here instead of just being disabled/hidden when you haven't
+  // connected yet — this is what that lands on: which card to draw the eye
+  // to, and why you were sent here at all.
+  const highlight = (loc.state as { highlight?: string; reason?: string } | null)?.highlight;
+  const reason = (loc.state as { highlight?: string; reason?: string } | null)?.reason;
   const q = useQuery({
     queryKey: ["integrations"], queryFn: api.integrations,
     enabled: !!user && !user.is_guest,
@@ -31,8 +40,9 @@ export default function Settings() {
         <div className="eyebrow">Settings</div>
         <h1 className="h1" style={{ marginTop: 6 }}>Integrations</h1>
         <p className="lede">
-          Connecting a Confluence space or Jira project needs a real account — there's
-          nowhere durable to keep a guest's credentials.
+          {reason === "publish"
+            ? "Publishing to Confluence needs a real account — there's nowhere durable to keep a guest's credentials."
+            : "Connecting a Confluence space or Jira project needs a real account — there's nowhere durable to keep a guest's credentials."}
         </p>
         <a className="btn primary" href="/api/auth/github/login" style={{ marginTop: 18 }}>
           Sign in with GitHub
@@ -59,9 +69,16 @@ export default function Settings() {
         shown again.
       </p>
 
+      {highlight === "confluence" && !q.data.confluence.configured && (
+        <div className="settings-callout">
+          <SparkleIcon />
+          Add your Confluence details below, then head back and publish.
+        </div>
+      )}
+
       <div className="settings-grid">
         <GithubCard data={q.data.github} onSaved={refresh} />
-        <ConfluenceCard data={q.data.confluence} onSaved={refresh} />
+        <ConfluenceCard data={q.data.confluence} onSaved={refresh} highlighted={highlight === "confluence"} />
         <JiraCard data={q.data.jira} onSaved={refresh} />
       </div>
     </div>
@@ -138,7 +155,7 @@ function GithubCard(
 }
 
 function ConfluenceCard(
-  { data, onSaved }: { data: ConfluenceIntegration; onSaved: () => void },
+  { data, onSaved, highlighted }: { data: ConfluenceIntegration; onSaved: () => void; highlighted?: boolean },
 ) {
   const [baseUrl, setBaseUrl] = useState(data.base_url);
   const [email, setEmail] = useState(data.email);
@@ -146,6 +163,11 @@ function ConfluenceCard(
   const [spaceKey, setSpaceKey] = useState(data.space_key);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (highlighted) cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlighted]);
 
   const save = async () => {
     setBusy(true); setMsg(null);
@@ -177,7 +199,7 @@ function ConfluenceCard(
   };
 
   return (
-    <div className="settings-card">
+    <div className={"settings-card" + (highlighted ? " highlight" : "")} ref={cardRef}>
       <div className="settings-card-head">
         <span className="settings-card-title">Confluence</span>
         <span className={"settings-badge" + (data.configured ? " on" : "")}>

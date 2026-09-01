@@ -149,7 +149,26 @@ button { font-family: inherit; }
 .settings-card {
   background: var(--card-bg); border: 1px solid var(--card-border);
   border-radius: var(--r-lg); padding: 18px 20px; box-shadow: var(--card-glow);
+  transition: border-color 0.3s, box-shadow 0.3s;
 }
+/* landed here from "Publish to Confluence" with no credentials set yet —
+   draw the eye to exactly the card that needs filling in. */
+.settings-card.highlight {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent), var(--card-glow);
+  animation: settings-pulse 1.6s ease-out 1;
+}
+@keyframes settings-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent), var(--card-glow); }
+  100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent), var(--card-glow); }
+}
+.settings-callout {
+  margin-top: 14px; padding: 11px 14px; border-radius: var(--r-sm); font-size: 13.5px; line-height: 1.5;
+  display: flex; align-items: center; gap: 9px; font-weight: 600; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--card-bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--card-border)); border-left-width: 4px;
+}
+.settings-callout svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--accent); }
 .settings-card-head { display: flex; align-items: center; justify-content: space-between; }
 .settings-card-title { font-size: 15px; font-weight: 600; }
 .settings-badge {
