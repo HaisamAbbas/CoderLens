@@ -38,14 +38,23 @@ def _ensure_additive_columns() -> None:
     from sqlalchemy import inspect, text
 
     inspector = inspect(engine)
-    if "users" not in inspector.get_table_names():
-        return
-    existing = {c["name"] for c in inspector.get_columns("users")}
-    with engine.begin() as conn:
-        if "is_guest" not in existing:
-            conn.execute(text("ALTER TABLE users ADD COLUMN is_guest boolean NOT NULL DEFAULT false"))
-        if "last_active_at" not in existing:
-            conn.execute(text("ALTER TABLE users ADD COLUMN last_active_at timestamptz"))
+    table_names = set(inspector.get_table_names())
+
+    if "users" in table_names:
+        existing = {c["name"] for c in inspector.get_columns("users")}
+        with engine.begin() as conn:
+            if "is_guest" not in existing:
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_guest boolean NOT NULL DEFAULT false"))
+            if "last_active_at" not in existing:
+                conn.execute(text("ALTER TABLE users ADD COLUMN last_active_at timestamptz"))
+
+    if "user_integrations" in table_names:
+        existing = {c["name"] for c in inspector.get_columns("user_integrations")}
+        if "github_pat_encrypted" not in existing:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE user_integrations ADD COLUMN github_pat_encrypted text NOT NULL DEFAULT ''"
+                ))
 
 
 @contextmanager

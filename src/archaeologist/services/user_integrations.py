@@ -27,6 +27,10 @@ def jira_configured(integ: UserIntegration | None) -> bool:
                and integ.jira_api_token_encrypted and integ.jira_project_key)
 
 
+def github_pat_configured(integ: UserIntegration | None) -> bool:
+    return bool(integ and integ.github_pat_encrypted)
+
+
 def confluence_credentials(integ: UserIntegration) -> dict:
     """Decrypted, ready to use — call only after confluence_configured() is True."""
     return {
@@ -46,6 +50,11 @@ def jira_credentials(integ: UserIntegration) -> dict:
         "project_key": integ.jira_project_key,
         "issue_type": integ.jira_issue_type or "Task",
     }
+
+
+def github_pat(integ: UserIntegration) -> str:
+    """Decrypted, ready to use — call only after github_pat_configured() is True."""
+    return decrypt(integ.github_pat_encrypted)
 
 
 def _get_or_create(session: Session, user_id: int) -> UserIntegration:
@@ -101,3 +110,17 @@ def clear_jira(session: Session, user_id: int) -> None:
     integ.jira_api_token_encrypted = ""
     integ.jira_project_key = ""
     integ.jira_issue_type = "Task"
+
+
+def upsert_github_pat(session: Session, user_id: int, api_token: str) -> UserIntegration:
+    integ = _get_or_create(session, user_id)
+    if api_token:  # blank on this route means "clear" (see routers/integrations.py) —
+        integ.github_pat_encrypted = encrypt(api_token)  # a real value always overwrites
+    return integ
+
+
+def clear_github_pat(session: Session, user_id: int) -> None:
+    integ = get(session, user_id)
+    if integ is None:
+        return
+    integ.github_pat_encrypted = ""

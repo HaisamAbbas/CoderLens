@@ -23,7 +23,10 @@ export interface JiraIntegration {
   configured: boolean; base_url: string; email: string; project_key: string;
   issue_type: string; has_token: boolean;
 }
-export interface Integrations { confluence: ConfluenceIntegration; jira: JiraIntegration; }
+export interface GithubIntegration { configured: boolean; has_token: boolean; }
+export interface Integrations {
+  confluence: ConfluenceIntegration; jira: JiraIntegration; github: GithubIntegration;
+}
 
 export interface ConfluenceResult {
   key: string; title: string; status: "ok" | "error"; url?: string; error?: string;

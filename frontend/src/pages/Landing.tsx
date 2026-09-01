@@ -63,6 +63,14 @@ export default function Landing() {
   const [jobId, setJobId] = useState<string | null>(null);
 
   const reposQ = useQuery({ queryKey: ["repos"], queryFn: api.repos });
+  // Shares the ["integrations"] cache with Settings.tsx — just here to know
+  // whether a saved GitHub PAT exists, so leaving the token field blank can
+  // be explained as "use the saved one" instead of looking like a no-op.
+  const integrationsQ = useQuery({
+    queryKey: ["integrations"], queryFn: api.integrations,
+    enabled: !!user && !user.is_guest,
+  });
+  const hasSavedToken = integrationsQ.data?.github.has_token ?? false;
 
   const { job, error: jobError, setError: setJobError } = useJob(jobId, () => nav("/overview"));
 
@@ -135,7 +143,11 @@ export default function Landing() {
                 type="password"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder="GitHub PAT (fine-grained or classic with repo access) — used only for the clone, never stored"
+                placeholder={
+                  hasSavedToken
+                    ? "Leave blank to use your saved GitHub token"
+                    : "GitHub PAT (fine-grained or classic with repo access) — used only for the clone, never stored"
+                }
                 aria-label="GitHub access token"
                 autoComplete="off"
                 disabled={busy}
@@ -143,6 +155,12 @@ export default function Landing() {
               {user?.is_guest && (
                 <div className="lp-msg">
                   <a href="/api/auth/github/login">Sign in with GitHub</a> to ingest a private repository.
+                </div>
+              )}
+              {!user?.is_guest && hasSavedToken && !token && (
+                <div className="lp-msg">
+                  Using your saved GitHub token —{" "}
+                  <Link to="/settings">manage it in Settings</Link>.
                 </div>
               )}
             </>

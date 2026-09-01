@@ -125,6 +125,9 @@ export const api = {
     base_url: string; email: string; api_token?: string; project_key: string; issue_type?: string;
   }) => put<{ ok: boolean }>("/api/integrations/jira", body),
   deleteJiraIntegration: () => del("/api/integrations/jira"),
+  putGithubIntegration: (apiToken: string) =>
+    put<{ ok: boolean }>("/api/integrations/github", { api_token: apiToken }),
+  deleteGithubIntegration: () => del("/api/integrations/github"),
 };
 
 /**

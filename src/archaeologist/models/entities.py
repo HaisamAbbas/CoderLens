@@ -336,13 +336,16 @@ class JiraTicketJob(Base):
 
 
 class UserIntegration(Base):
-    """One user's own Confluence/Jira credentials (Phase 4 of the multi-user
-    migration) — these used to be global CONFLUENCE_*/JIRA_* env vars shared
-    by everyone; now each user brings their own, so publishing/ticketing
-    lands in THEIR space/project, not an operator-configured shared one.
+    """One user's own Confluence/Jira/GitHub credentials — these used to be
+    global env vars shared by everyone (Confluence/Jira: Phase 4 of the
+    multi-user migration); now each user brings their own. API tokens are
+    stored encrypted (see security.py) — never in plaintext, never sent back
+    to the frontend once saved.
 
-    API tokens are stored encrypted (see security.py) — never in plaintext,
-    never sent back to the frontend once saved."""
+    `github_pat_encrypted` is a saved private-repo access token so a
+    signed-in user doesn't have to paste it every single time they ingest a
+    new private repo — `POST /api/repos`'s explicit `token` field still
+    always wins when supplied, this is only the fallback."""
 
     __tablename__ = "user_integrations"
 
@@ -359,6 +362,8 @@ class UserIntegration(Base):
     jira_api_token_encrypted: Mapped[str] = mapped_column(Text, default="")
     jira_project_key: Mapped[str] = mapped_column(String(50), default="")
     jira_issue_type: Mapped[str] = mapped_column(String(50), default="Task")
+
+    github_pat_encrypted: Mapped[str] = mapped_column(Text, default="")
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),

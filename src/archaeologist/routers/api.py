@@ -88,6 +88,22 @@ def _owns_repo(session, user: User, repo_id: int) -> bool:
     ) is not None
 
 
+def _effective_token(session, user: User, explicit_token: str) -> str:
+    """An explicitly-supplied token always wins (lets a signed-in user
+    override their saved PAT for one specific repo); otherwise falls back to
+    the user's own saved GitHub PAT, if they have one and aren't a guest —
+    guests can't save one at all (RequireRealUser-gated), so there's nothing
+    to fall back to for them."""
+    if explicit_token or user.is_guest:
+        return explicit_token
+    from archaeologist.services import user_integrations
+
+    integ = user_integrations.get(session, user.id)
+    if user_integrations.github_pat_configured(integ):
+        return user_integrations.github_pat(integ)
+    return ""
+
+
 def _count(session, model, repo_id) -> int:
     return session.scalar(
         select(func.count()).select_from(model).where(model.repo_id == repo_id)
@@ -205,8 +221,8 @@ def add_repo(body: AddRepoBody, user: User = CurrentUser) -> dict:
     running, the existing job is returned instead of starting a second one —
     a different user's in-flight job for the same URL is unaffected.
     """
-    token = body.token.strip()
-    if token and user.is_guest:
+    explicit_token = body.token.strip()
+    if explicit_token and user.is_guest:
         raise HTTPException(401, "Sign in with GitHub to ingest a private repository.")
     url = body.url.strip()
     parsed = urlparse(url)
@@ -216,6 +232,8 @@ def add_repo(body: AddRepoBody, user: User = CurrentUser) -> dict:
     # ".../owner/repo/tree/main") means the repo, not a git remote — normalize
     # before it's stored/used anywhere downstream, not just at clone time.
     url = normalize_repo_url(url)
+    with session_scope() as s:
+        token = _effective_token(s, user, explicit_token)
     job = ingest.start_ingest(url, user.id, token=token)
     return {"job_id": job["id"], "repo_url": url, "status": job["status"]}  # token never echoed
 
@@ -255,12 +273,13 @@ def refresh_repo(body: RefreshRepoBody | None = None, user: User = CurrentUser) 
     Today refresh never contacts the remote unless the local clone is gone
     (ephemeral disk) — in that edge case a private repo needs its PAT again;
     pass it here. No dedicated frontend flow; this is a fallback."""
+    explicit_token = (body.token if body else "").strip()
+    if explicit_token and user.is_guest:
+        raise HTTPException(401, "Sign in with GitHub to use a private-repo access token.")
     with session_scope() as s:
         r = _repo(s, user)
         url = r.url
-    token = (body.token if body else "").strip()
-    if token and user.is_guest:
-        raise HTTPException(401, "Sign in with GitHub to use a private-repo access token.")
+        token = _effective_token(s, user, explicit_token)
     job = ingest.start_ingest(url, user.id, token=token)
     return {"job_id": job["id"], "repo_url": url, "status": job["status"]}
 

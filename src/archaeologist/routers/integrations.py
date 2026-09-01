@@ -1,6 +1,8 @@
-"""/api/integrations — a user's own Confluence/Jira connection settings
-(Phase 4 of the multi-user migration). Never returns a saved API token back
-to the client; a blank token on a PUT means "keep the existing one."
+"""/api/integrations — a user's own Confluence/Jira/GitHub connection
+settings (Confluence/Jira: Phase 4 of the multi-user migration; GitHub: the
+saved-PAT convenience so a signed-in user doesn't have to paste their token
+every time they ingest a new private repo). Never returns a saved API token
+back to the client; a blank token on a PUT means "keep the existing one."
 """
 
 from fastapi import APIRouter
@@ -33,6 +35,10 @@ def get_integrations(user: User = RequireRealUser) -> dict:
                 "project_key": integ.jira_project_key if integ else "",
                 "issue_type": integ.jira_issue_type if integ else "Task",
                 "has_token": bool(integ and integ.jira_api_token_encrypted),
+            },
+            "github": {
+                "configured": user_integrations.github_pat_configured(integ),
+                "has_token": bool(integ and integ.github_pat_encrypted),
             },
         }
 
@@ -82,4 +88,22 @@ def put_jira(body: JiraIntegrationBody, user: User = RequireRealUser) -> dict:
 def delete_jira(user: User = RequireRealUser) -> dict:
     with session_scope() as s:
         user_integrations.clear_jira(s, user.id)
+    return {"ok": True}
+
+
+class GithubIntegrationBody(BaseModel):
+    api_token: str
+
+
+@router.put("/github")
+def put_github(body: GithubIntegrationBody, user: User = RequireRealUser) -> dict:
+    with session_scope() as s:
+        user_integrations.upsert_github_pat(s, user.id, body.api_token)
+    return {"ok": True}
+
+
+@router.delete("/github")
+def delete_github(user: User = RequireRealUser) -> dict:
+    with session_scope() as s:
+        user_integrations.clear_github_pat(s, user.id)
     return {"ok": True}

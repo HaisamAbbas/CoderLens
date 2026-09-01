@@ -20,6 +20,7 @@ is gitignored; this file is not.
 | 4 | Per-user integration credentials (Confluence/Jira) | **Done, verified except a real Confluence/Jira round-trip** |
 | 5 | LLM usage tracking (rescoped — see below) | **Done, verified** |
 | 6 | Guest access (browse public repos without login) | **Done, verified — not in the original plan, see below** |
+| 6b | Saved GitHub PAT (per-user, for private-repo ingest) | **Done, verified — not in the original plan, see below** |
 
 ---
 
@@ -572,6 +573,64 @@ path; this doesn't.
   hit that ceiling. Not a new problem this phase introduced (it already
   existed for any unauthenticated ingest), just newly relevant now that
   ingesting without an account is the intended, encouraged path.
+
+---
+
+## Phase 6b — Saved GitHub PAT
+
+**Not in the original plan** — a direct follow-up to Phase 6: a signed-in
+user was pasting their private-repo PAT fresh on every single ingest (the
+token was always transient, never stored, by design). Explicit request:
+let them save it once, mirroring exactly how Phase 4 already lets a user
+save their own Confluence/Jira credentials.
+
+- `UserIntegration` gains `github_pat_encrypted` — same encrypted-at-rest
+  pattern as the Confluence/Jira tokens (`security.py`'s Fernet
+  encrypt/decrypt). `models/db.py::_ensure_additive_columns()` extended to
+  `ALTER TABLE user_integrations ADD COLUMN github_pat_encrypted` for
+  existing installs (this table already existed from Phase 4).
+- `services/user_integrations.py`: `github_pat_configured()`, `github_pat()`
+  (decrypted), `upsert_github_pat()`, `clear_github_pat()`.
+- `routers/integrations.py`: `PUT`/`DELETE /api/integrations/github`
+  (`RequireRealUser`-gated, same as Confluence/Jira — a guest structurally
+  can't have one). `GET /api/integrations`'s response gained a `github`
+  section (`configured`/`has_token`, token itself never returned).
+- `routers/api.py`: new `_effective_token(session, user, explicit_token)` —
+  **an explicitly-supplied token on the ingest form always wins** (lets a
+  signed-in user override their saved PAT for one specific repo without
+  touching what's saved); only falls back to the user's saved PAT when the
+  form field was left blank AND they aren't a guest. Used by both
+  `POST /api/repos` and `POST /api/repos/refresh`. The existing
+  guest-can't-use-a-token 401 check still fires on the raw form input
+  before this resolution happens, unchanged from Phase 6.
+- Frontend: new `GithubCard` in `Settings.tsx` (single token field, no
+  base_url/email/space_key needed — GitHub's API endpoint is fixed).
+  `Landing.tsx` now queries `/api/integrations` (shares Settings.tsx's
+  query cache) to know whether a saved PAT exists; if so, the token field's
+  placeholder changes to "Leave blank to use your saved GitHub token" and a
+  hint with a link to Settings appears instead of leaving the user guessing
+  whether an empty field will actually work.
+
+**Verified:**
+- Direct test of `_effective_token()`: an explicit token always wins even
+  when a different one is saved; falls back to the saved, decrypted PAT
+  only when the form field is blank; a guest gets `""` either way (no
+  fallback exists for them since they can never have a `UserIntegration`
+  row via the real API path — `RequireRealUser` blocks the only route that
+  creates one).
+- HTTP-level (`TestClient` + `dependency_overrides` for the real-user path,
+  a real cookie jar against the live dev server for the guest-blocked
+  path — mixing both in one dependency-override pass was tried first and
+  produced a misleading pass/fail, since overriding two dependencies at
+  once made the "guest" case never actually exercise guest logic; caught
+  and corrected before trusting the result): `PUT /api/integrations/github`
+  401s for a guest against the real server; for a real user, `GET` before
+  saving correctly shows `configured: false`; `PUT` saves and `GET`
+  reflects `configured: true, has_token: true` with the token never echoed
+  back in the response body; the encrypted-then-decrypted stored value
+  matches exactly what was sent; `DELETE` correctly clears it.
+- `uv run python -c "import archaeologist.main"` and `tsc --noEmit` both
+  clean; full test suite 101 passed, same pre-existing unrelated failures.
 
 ---
 

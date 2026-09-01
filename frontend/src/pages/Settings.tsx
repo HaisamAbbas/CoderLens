@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { PageLoading, ErrorState } from "../components/PageState";
 import { useAuth } from "../lib/AuthContext";
-import type { ConfluenceIntegration, JiraIntegration } from "../lib/types";
+import type { ConfluenceIntegration, GithubIntegration, JiraIntegration } from "../lib/types";
 
 /** Each user's own Confluence/Jira connection (Phase 4 of the multi-user
  *  migration) — these used to be global env vars shared by everyone; now
@@ -60,8 +60,78 @@ export default function Settings() {
       </p>
 
       <div className="settings-grid">
+        <GithubCard data={q.data.github} onSaved={refresh} />
         <ConfluenceCard data={q.data.confluence} onSaved={refresh} />
         <JiraCard data={q.data.jira} onSaved={refresh} />
+      </div>
+    </div>
+  );
+}
+
+function GithubCard(
+  { data, onSaved }: { data: GithubIntegration; onSaved: () => void },
+) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  const save = async () => {
+    if (!token) return;
+    setBusy(true); setMsg(null);
+    try {
+      await api.putGithubIntegration(token);
+      setToken("");
+      setMsg({ kind: "ok", text: "Saved." });
+      onSaved();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      await api.deleteGithubIntegration();
+      setToken("");
+      onSaved();
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="settings-card">
+      <div className="settings-card-head">
+        <span className="settings-card-title">GitHub</span>
+        <span className={"settings-badge" + (data.configured ? " on" : "")}>
+          {data.configured ? "Saved" : "Not saved"}
+        </span>
+      </div>
+      <p className="settings-note">
+        Save a personal access token so you don't have to paste it every time you ingest
+        a new private repo. An explicit token pasted on the ingest form always overrides this.
+      </p>
+
+      <label className="settings-field">
+        <span>Personal access token</span>
+        <input type="password" value={token} onChange={(e) => setToken(e.target.value)}
+              placeholder={data.has_token ? "•••••••• (leave blank to keep)" : "Fine-grained or classic, with repo access"} />
+      </label>
+
+      {msg && <div className={"settings-msg " + msg.kind}>{msg.text}</div>}
+
+      <div className="settings-actions">
+        <button className="btn primary" onClick={save} disabled={busy || !token}>Save</button>
+        {data.configured && (
+          <button className="btn" onClick={disconnect} disabled={busy}>Remove</button>
+        )}
+        <a className="settings-help" href="https://github.com/settings/tokens" target="_blank" rel="noreferrer">
+          Create a token ↗
+        </a>
       </div>
     </div>
   );
