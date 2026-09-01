@@ -16,6 +16,7 @@ the only ownership anchor available until the ingest completes.
 
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from sqlalchemy import select
 
@@ -110,6 +111,12 @@ def _run(job_id: str, repo_url: str, user_id: int, token: str = "") -> None:
         _update(job_id, status="error", step="", error=str(exc), message=f"Failed at step {step or 'start'}")
 
 
+CLONE_TIMEOUT_S = 600  # generous for a legitimately large repo; a real hang (a
+                       # stalled network call inside GitPython's clone_from,
+                       # which has no timeout of its own) needs a hard ceiling
+                       # or the job sits "running" forever with zero feedback.
+
+
 def _pipeline(job_id: str, repo_url: str, user_id: int, token: str = "") -> None:
     # --- 1. Clone + walk the five streams into Postgres ---
     _update(job_id, step="clone", message=f"Cloning and walking {repo_url} …")
@@ -118,7 +125,25 @@ def _pipeline(job_id: str, repo_url: str, user_id: int, token: str = "") -> None
     # commits) an uncapped walk looks hung for 30+ minutes. 2,000 keeps the
     # churn/coupling/hotspot signals fully populated; `None` (all history)
     # remains available to the CLI caller.
-    stats = ingest_repository(repo_url=repo_url, user_id=user_id, token=token, max_commits=2000)
+    # NOT a `with` block on purpose: ThreadPoolExecutor.__exit__ calls
+    # shutdown(wait=True), which would block on exactly the same stuck thread
+    # future.result()'s timeout just gave up on — defeating the timeout
+    # entirely. shutdown(wait=False) below lets this function return the
+    # moment the timeout fires; the orphaned thread finishes or dies on its
+    # own, unobserved (Python has no API to forcibly kill a thread).
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(ingest_repository, repo_url=repo_url, user_id=user_id,
+                         token=token, max_commits=2000)
+    try:
+        stats = future.result(timeout=CLONE_TIMEOUT_S)
+    except FutureTimeoutError as exc:
+        pool.shutdown(wait=False)
+        raise RuntimeError(
+            f"Clone/history-walk exceeded {CLONE_TIMEOUT_S}s — likely a stalled "
+            "network call to the git remote. Try again; if it keeps happening, "
+            "the host's outbound network to that remote may be the issue."
+        ) from exc
+    pool.shutdown(wait=False)
     job_stats = {
         "files": stats.files, "commits": stats.commits,
         "issues": stats.issues, "prs": stats.prs,
