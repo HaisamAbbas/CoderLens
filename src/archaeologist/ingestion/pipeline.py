@@ -29,6 +29,8 @@ class IngestStats:
 
 
 def ingest_repository(
+    *,
+    user_id: int,
     repo_url: str | None = None,
     max_commits: int | None = None,
     max_issues: int | None = 500,
@@ -38,16 +40,21 @@ def ingest_repository(
 ) -> IngestStats:
     """`token` (optional GitHub PAT) authenticates the clone of a private repo
     transiently (see repository.clone_or_open) and falls back to the global
-    settings.github_token for the issues/PRs fetch when omitted."""
+    settings.github_token for the issues/PRs fetch when omitted.
+
+    `user_id` is required (keyword-only, no default) — every Repo row is now
+    owned by someone (Phase 2 of the multi-user migration); a CLI/notebook
+    caller must pass a real user id explicitly rather than silently getting
+    an ownerless repo."""
     repo_url = repo_url or settings.target_repo_url
     stats = IngestStats(repo_url=repo_url)
     init_db()
 
     with session_scope() as session:
         repo_id = (
-            _refresh_only_issues(session, repo_url, max_issues, stats)
+            _refresh_only_issues(session, repo_url, user_id, max_issues, stats)
             if only_issues
-            else _full_ingest(session, repo_url, max_commits, stats, token)
+            else _full_ingest(session, repo_url, user_id, max_commits, stats, token)
         )
 
         if skip_issues:
@@ -67,8 +74,8 @@ def _effective_clone_token(token: str) -> str:
     return (token or "").strip() or settings.github_token
 
 
-def _full_ingest(session, repo_url: str, max_commits: int | None, stats: IngestStats,
-                 token: str = "") -> int:
+def _full_ingest(session, repo_url: str, user_id: int, max_commits: int | None,
+                 stats: IngestStats, token: str = "") -> int:
     print(f"[1/5] Cloning / opening {repo_url} ...")
     repos_dir = Path(settings.repos_dir).resolve()
     git_repo, dest = repository.clone_or_open(repo_url, repos_dir,
@@ -76,9 +83,12 @@ def _full_ingest(session, repo_url: str, max_commits: int | None, stats: IngestS
     branch, head_sha = repository.head_info(git_repo)
     print(f"      -> {dest}  (branch={branch}, head={head_sha[:8] if head_sha else '?'})")
 
-    repo = session.scalar(select(Repo).where(Repo.url == repo_url))
+    # Scoped by (user_id, url), not url alone — Repo.url is no longer
+    # globally unique, so an unscoped lookup here would find (and silently
+    # overwrite) a DIFFERENT user's repo row that happens to share this URL.
+    repo = session.scalar(select(Repo).where(Repo.url == repo_url, Repo.user_id == user_id))
     if repo is None:
-        repo = Repo(url=repo_url)
+        repo = Repo(url=repo_url, user_id=user_id)
         session.add(repo)
     repo.name = repository.repo_slug(repo_url)[1]
     repo.default_branch = branch
@@ -107,8 +117,8 @@ def _full_ingest(session, repo_url: str, max_commits: int | None, stats: IngestS
     return repo_id
 
 
-def _refresh_only_issues(session, repo_url: str, max_issues, stats: IngestStats) -> int:
-    repo = session.scalar(select(Repo).where(Repo.url == repo_url))
+def _refresh_only_issues(session, repo_url: str, user_id: int, max_issues, stats: IngestStats) -> int:
+    repo = session.scalar(select(Repo).where(Repo.url == repo_url, Repo.user_id == user_id))
     if repo is None:
         raise SystemExit(
             f"{repo_url} has not been ingested yet — run a full ingest first "

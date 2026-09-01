@@ -3,13 +3,22 @@
     uv run python -m archaeologist.eval.answer_run
 """
 
+from sqlalchemy import select
+
 from archaeologist import telemetry
 from archaeologist.eval import answer_eval
+from archaeologist.models.db import session_scope
+from archaeologist.models.entities import Repo
 
 
 def main() -> None:
     telemetry.reset()
-    rows = answer_eval.evaluate()
+    with session_scope() as session:
+        repo = session.scalar(select(Repo).order_by(Repo.id.desc()))
+        if repo is None:
+            raise SystemExit("No repo ingested.")
+        repo_id = repo.id
+    rows = answer_eval.evaluate(repo_id)
     agg = answer_eval.aggregate(rows)
 
     print("=== Per question ===")

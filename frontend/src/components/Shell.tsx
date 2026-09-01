@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/AuthContext";
 import { useTheme } from "../lib/useTheme";
 import { usePersona } from "../lib/usePersona";
 import { LogoMark } from "./Logo";
@@ -22,11 +23,17 @@ const TITLES: Record<string, string> = {
 
 export default function Shell() {
   const { isDark, toggle } = useTheme();
+  const { user } = useAuth();
   const [persona] = usePersona();
   const loc = useLocation();
   const nav = useNavigate();
   const qc = useQueryClient();
   const { data: repo, error: repoError, isPending: repoPending } = useQuery({ queryKey: ["repo"], queryFn: api.repo });
+  // Only for the switcher below — every OTHER query in this app (wiki,
+  // overview, graph, ...) has no repo_id of its own and just trusts the
+  // backend's "most recently ingested" pick, so switching repos has to
+  // invalidate the whole cache, not just ["repo"]/["repos"].
+  const { data: reposList } = useQuery({ queryKey: ["repos"], queryFn: api.repos });
   const { data: status } = useQuery({ queryKey: ["status"], queryFn: api.status, staleTime: 60_000 });
   // Fetched here (not just in Tour.tsx) so the sidebar can list "Start here"'s
   // sub-pages — same cache entry, so navigating into Tour is instant.
@@ -60,6 +67,17 @@ export default function Shell() {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (q.trim()) nav("/search", { state: { q: q.trim() } });
+  };
+
+  const switchRepo = async (repoId: number) => {
+    await api.activateRepo(repoId);
+    qc.clear();  // every other query trusts "most recent" with no repo_id of its own
+  };
+
+  const signOut = async () => {
+    await api.logout();
+    qc.clear();               // drop every cached query — the next user must not see this one's data
+    window.location.href = "/login";  // hard navigation, not SPA nav — guarantees a clean reload
   };
 
   const refresh = async () => {
@@ -139,7 +157,20 @@ export default function Shell() {
 
         <div className="foot">
           <div className="lbl">Investigating</div>
-          <div className="repo">{repo ? repo.url.replace(/^https?:\/\//, "") : "…"}</div>
+          {reposList && reposList.repos.length > 1 ? (
+            <select
+              className="repo-switcher"
+              value={reposList.repos.find((r) => r.name === repo?.name)?.id ?? ""}
+              onChange={(e) => switchRepo(Number(e.target.value))}
+              title="Switch between your ingested repositories"
+            >
+              {reposList.repos.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          ) : (
+            <div className="repo">{repo ? repo.url.replace(/^https?:\/\//, "") : "…"}</div>
+          )}
           {repo && (
             <>
               <div className="stats">
@@ -172,6 +203,13 @@ export default function Shell() {
                 ⇩ Export shareable snapshot
               </a>
             </>
+          )}
+          {user && (
+            <div className="user-chip">
+              {user.avatar_url && <img src={user.avatar_url} alt="" className="user-avatar" />}
+              <span className="user-name" title={user.email ?? undefined}>{user.github_login}</span>
+              <button className="user-signout" onClick={signOut} title="Sign out">Sign out</button>
+            </div>
           )}
         </div>
       </aside>

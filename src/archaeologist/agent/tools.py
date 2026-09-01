@@ -19,20 +19,20 @@ def _clients():
     return _client, _embedder
 
 
-def search(queries: list[str], streams: list[str] | None, k: int = 6) -> list[dict]:
+def search(queries: list[str], streams: list[str] | None, repo_id: int, k: int = 6) -> list[dict]:
     client, embedder = _clients()
     hits: list[dict] = []
     for query in queries:
-        hits.extend(search_all(client, embedder, query, k=k, streams=streams))
+        hits.extend(search_all(client, embedder, query, repo_id, k=k, streams=streams))
     return hits
 
 
-def graph_expand(qualified_names: list[str]) -> list[dict]:
+def graph_expand(qualified_names: list[str], repo_id: int) -> list[dict]:
     """Turn dependency-graph facts into evidence items (stream='graph')."""
     out: list[dict] = []
     with session_scope() as session:
         for qn in qualified_names:
-            sym = find_symbol(session, qn)
+            sym = find_symbol(session, qn, repo_id)
             if sym is None:
                 continue
             dependents = who_depends_on(session, sym.id)

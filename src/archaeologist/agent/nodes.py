@@ -69,14 +69,14 @@ def retrieve_node(state: InvestigationState) -> dict:
     evidence = list(state["evidence"])
     seen = {(e["stream"], e["citation"], e["title"]) for e in evidence}
 
-    for hit in tools.search(state["queries"], state.get("streams")):
+    for hit in tools.search(state["queries"], state.get("streams"), state["repo_id"]):
         key = (hit["stream"], hit["citation"], hit["title"])
         if key not in seen:
             seen.add(key)
             evidence.append(hit)
 
     if state["iterations"] == 0 and state.get("graph_targets"):
-        for ev in tools.graph_expand(state["graph_targets"]):
+        for ev in tools.graph_expand(state["graph_targets"], state["repo_id"]):
             key = (ev["stream"], ev["citation"], ev["title"])
             if key not in seen:
                 seen.add(key)

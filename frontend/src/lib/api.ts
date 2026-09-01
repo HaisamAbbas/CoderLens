@@ -4,11 +4,14 @@ import type {
   ConversationDetail, ConversationKind, ConversationSummary, Coupling, DeadCode, Entrypoint,
   FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, InvestigateResult,
   JiraTicketJob, Overview, Repo, RepoJob, SearchResponse, SimulationTrace, Status, Stream,
-  StreamEvent, SymbolDetail, SymbolIndexEntry, TreeFile, WeaknessList, WeaknessScanJob, Wiki,
+  StreamEvent, SymbolDetail, SymbolIndexEntry, TreeFile, User, WeaknessList, WeaknessScanJob, Wiki,
 } from "./types";
 
+// "include" on every request: the session cookie is how the backend knows
+// who's asking (Phase 1 of the multi-user migration) — same-origin in prod
+// and via the Vite dev proxy, so this is enough without extra CORS work.
 async function get<T>(url: string): Promise<T> {
-  const r = await fetch(url);
+  const r = await fetch(url, { credentials: "include" });
   if (!r.ok) throw new Error(await errText(r));
   return r.json() as Promise<T>;
 }
@@ -16,6 +19,7 @@ async function get<T>(url: string): Promise<T> {
 async function post<T>(url: string, body: unknown): Promise<T> {
   const r = await fetch(url, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -24,7 +28,7 @@ async function post<T>(url: string, body: unknown): Promise<T> {
 }
 
 async function del(url: string): Promise<void> {
-  const r = await fetch(url, { method: "DELETE" });
+  const r = await fetch(url, { method: "DELETE", credentials: "include" });
   if (!r.ok) throw new Error(await errText(r));
 }
 
@@ -48,6 +52,7 @@ export const api = {
   status: () => get<Status>("/api/status"),
   repo: () => get<Repo>("/api/repo"),
   repos: () => get<{ repos: Repo[] }>("/api/repos"),
+  activateRepo: (repoId: number) => post<{ id: number; name: string }>(`/api/repos/${repoId}/activate`, {}),
   addRepo: (url: string, token = "") => post<{ job_id: string; repo_url: string; status: string }>("/api/repos", { url, token }),
   repoJob: (jobId: string) => get<RepoJob>(`/api/repos/jobs/${jobId}`),
   refreshRepo: (token = "") => post<{ job_id: string; repo_url: string; status: string }>("/api/repos/refresh", { token }),
@@ -99,6 +104,8 @@ export const api = {
   createJiraTickets: (findingIds: number[]) =>
     post<{ job_id: string; status: string }>("/api/jira/tickets", { finding_ids: findingIds }),
   jiraJob: (jobId: string) => get<JiraTicketJob>(`/api/jira/jobs/${jobId}`),
+  me: () => get<User>("/api/auth/me"),
+  logout: () => post<{ ok: boolean }>("/api/auth/logout", {}),
 };
 
 /**
@@ -110,6 +117,7 @@ export async function* investigateStream(
 ): AsyncGenerator<StreamEvent> {
   const r = await fetch("/api/investigate/stream", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, max_iterations: maxIterations, history, simple }),
   });

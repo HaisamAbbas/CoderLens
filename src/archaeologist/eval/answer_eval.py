@@ -64,11 +64,11 @@ def judge(question: str, evidence: list[dict], answer: str) -> dict:
                 "unsupported_claims": -1, "verdict": "parse_error"}
 
 
-def evaluate(questions: list[str] | None = None) -> list[dict]:
+def evaluate(repo_id: int, questions: list[str] | None = None) -> list[dict]:
     questions = questions or DEFAULT_QUESTIONS
     rows = []
     for q in questions:
-        result = answer_question(q, k=8)
+        result = answer_question(q, repo_id, k=8)
         cv = citation_validity(result.answer, len(result.evidence))
         verdict = judge(q, result.evidence, result.answer)
         rows.append({"question": q, "n_evidence": len(result.evidence),

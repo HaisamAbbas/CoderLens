@@ -22,12 +22,12 @@ def _predicted_files(hits: list[dict]) -> list[str]:
     return files
 
 
-def evaluate(instances: list[dict], candidates: int = 15) -> list[dict]:
+def evaluate(instances: list[dict], repo_id: int, candidates: int = 15) -> list[dict]:
     client = get_client()
     embedder = get_embedder()
     rows: list[dict] = []
     for inst in instances:
-        hits = search_all(client, embedder, inst["question"], k=candidates, streams=["code"])
+        hits = search_all(client, embedder, inst["question"], repo_id, k=candidates, streams=["code"])
         pred = _predicted_files(hits)
         gold = inst["gold_files"]
         row = {"id": inst["id"], "question": inst["question"], "pred": pred, "gold": gold,

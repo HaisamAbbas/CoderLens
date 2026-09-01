@@ -4,6 +4,12 @@ Everything the React app needs: repo summary, orientation (overview), the file
 tree, file source + symbols, symbol detail (callers/callees), the dependency
 graph, cross-stream search, repo management (add / refresh / job status),
 and the ask/investigate endpoints (including streaming investigate).
+
+Every route below that touches repo data requires a signed-in user
+(`user: User = CurrentUser`) and resolves data scoped to THAT user's repos —
+Phase 2 of the multi-user migration. `/api/status` is the one exception
+(server-wide provider config, not user data) and stays open, matching
+`/health`.
 """
 
 import json
@@ -18,6 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from archaeologist.agent.graph import investigate_stream
+from archaeologist.auth import CurrentUser
 from archaeologist.config import settings
 from archaeologist.indexing.opensearch_client import get_client
 from archaeologist.ingestion.repository import normalize_repo_url
@@ -30,6 +37,7 @@ from archaeologist.models.entities import (
     Repo,
     Symbol,
     SymbolEdge,
+    User,
     Weakness,
 )
 from archaeologist.rag.llm import llm_available
@@ -59,12 +67,25 @@ def _active_order():
     return (Repo.ingested_at.desc().nullslast(), Repo.id.desc())
 
 
-def _repo(session) -> Repo:
-    """The active repo — the most recently ingested one."""
-    repo = session.scalar(select(Repo).order_by(*_active_order()))
+def _repo(session, user: User) -> Repo:
+    """The active repo — the CURRENT USER's most recently ingested one.
+    Never resolves another user's repo, even if theirs is more recent."""
+    repo = session.scalar(
+        select(Repo).where(Repo.user_id == user.id).order_by(*_active_order())
+    )
     if repo is None:
         raise HTTPException(404, "No repository ingested yet.")
     return repo
+
+
+def _owns_repo(session, user: User, repo_id: int) -> bool:
+    """Ownership check for routes that take a raw id (symbol_id, job_id's
+    repo_id, ...) instead of resolving through _repo() — these previously had
+    NO ownership check at all (a real IDOR: any signed-in user could fetch
+    any other user's data by guessing/incrementing an id)."""
+    return session.scalar(
+        select(Repo.id).where(Repo.id == repo_id, Repo.user_id == user.id)
+    ) is not None
 
 
 def _count(session, model, repo_id) -> int:
@@ -76,7 +97,8 @@ def _count(session, model, repo_id) -> int:
 @router.get("/status")
 def status() -> dict:
     """Runtime capabilities — which LLM/embedding providers are active. Lets the
-    UI show that the app works without any API key (local Ollama / offline)."""
+    UI show that the app works without any API key (local Ollama / offline).
+    Server-wide config, not user data — deliberately not gated behind login."""
     from archaeologist.rag.llm import active_model, llm_available, resolve_provider
     from archaeologist.retrieval.embeddings import get_embedder
 
@@ -107,9 +129,9 @@ def status() -> dict:
 
 
 @router.get("/repo")
-def repo_summary() -> dict:
+def repo_summary(user: User = CurrentUser) -> dict:
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         return {
             "name": r.name,
             "url": r.url,
@@ -146,11 +168,14 @@ def _repo_row(s, r: Repo) -> dict:
 
 
 @router.get("/repos")
-def repos() -> dict:
-    """Every ingested repo, newest first. The first entry is the active one —
-    same ordering as _repo(), so the list and the active repo never disagree."""
+def repos(user: User = CurrentUser) -> dict:
+    """Every repo THIS USER has ingested, newest first. The first entry is
+    the active one — same ordering as _repo(), so the list and the active
+    repo never disagree."""
     with session_scope() as s:
-        rows = s.scalars(select(Repo).order_by(*_active_order())).all()
+        rows = s.scalars(
+            select(Repo).where(Repo.user_id == user.id).order_by(*_active_order())
+        ).all()
         return {"repos": [_repo_row(s, r) for r in rows]}
 
 
@@ -160,12 +185,14 @@ class AddRepoBody(BaseModel):
 
 
 @router.post("/repos")
-def add_repo(body: AddRepoBody) -> dict:
+def add_repo(body: AddRepoBody, user: User = CurrentUser) -> dict:
     """Start a full ingest (clone → streams → symbols → indexes → graph) of a
-    repo URL in the background. Returns the job; the UI polls its status.
+    repo URL in the background, owned by the signed-in user. Returns the job;
+    the UI polls its status.
 
-    Idempotent: if an ingest for this URL is already running, the existing job
-    is returned instead of starting a second one.
+    Idempotent per-user: if THIS user already has an ingest for this URL
+    running, the existing job is returned instead of starting a second one —
+    a different user's in-flight job for the same URL is unaffected.
     """
     url = body.url.strip()
     parsed = urlparse(url)
@@ -175,14 +202,30 @@ def add_repo(body: AddRepoBody) -> dict:
     # ".../owner/repo/tree/main") means the repo, not a git remote — normalize
     # before it's stored/used anywhere downstream, not just at clone time.
     url = normalize_repo_url(url)
-    job = ingest.start_ingest(url, token=body.token.strip())
+    job = ingest.start_ingest(url, user.id, token=body.token.strip())
     return {"job_id": job["id"], "repo_url": url, "status": job["status"]}  # token never echoed
 
 
+@router.post("/repos/{repo_id}/activate")
+def activate_repo(repo_id: int, user: User = CurrentUser) -> dict:
+    """Make an already-ingested repo the active one again, without
+    re-ingesting — `_repo()` always resolves to the most-recently-ingested
+    row, so bumping `ingested_at` to now is enough to switch. This is the
+    whole mechanism behind the frontend's repo switcher: it doesn't need
+    explicit repo_id plumbing through every page, just a way to change which
+    repo "most recent" currently means for this user."""
+    with session_scope() as s:
+        repo = s.get(Repo, repo_id)
+        if repo is None or repo.user_id != user.id:
+            raise HTTPException(404, "Repo not found")
+        repo.ingested_at = datetime.now(timezone.utc)
+        return {"id": repo.id, "name": repo.name}
+
+
 @router.get("/repos/jobs/{job_id}")
-def repo_job(job_id: str) -> dict:
+def repo_job(job_id: str, user: User = CurrentUser) -> dict:
     status = ingest.job_status(job_id)
-    if status is None:
+    if status is None or status["user_id"] != user.id:
         raise HTTPException(404, f"Unknown ingest job: {job_id}")
     return status
 
@@ -192,24 +235,24 @@ class RefreshRepoBody(BaseModel):
 
 
 @router.post("/repos/refresh")
-def refresh_repo(body: RefreshRepoBody | None = None) -> dict:
+def refresh_repo(body: RefreshRepoBody | None = None, user: User = CurrentUser) -> dict:
     """Re-ingest the active repo end-to-end (picks up new commits / files).
 
     Today refresh never contacts the remote unless the local clone is gone
     (ephemeral disk) — in that edge case a private repo needs its PAT again;
     pass it here. No dedicated frontend flow; this is a fallback."""
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         url = r.url
     token = (body.token if body else "").strip()
-    job = ingest.start_ingest(url, token=token)
+    job = ingest.start_ingest(url, user.id, token=token)
     return {"job_id": job["id"], "repo_url": url, "status": job["status"]}
 
 
 @router.get("/overview")
-def overview() -> dict:
+def overview(user: User = CurrentUser) -> dict:
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         # degree per file (from symbol edges aggregated to files)
         sym = {x.id: x for x in s.scalars(select(Symbol).where(Symbol.repo_id == r.id))}
         deg: dict[str, int] = defaultdict(int)
@@ -256,9 +299,9 @@ def overview() -> dict:
 
 
 @router.get("/tree")
-def tree() -> dict:
+def tree(user: User = CurrentUser) -> dict:
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         rows = s.execute(
             select(File.path, File.category, File.language, File.loc)
             .where(File.repo_id == r.id).order_by(File.path)
@@ -277,9 +320,9 @@ def tree() -> dict:
 
 
 @router.get("/file")
-def file_content(path: str = Query(...)) -> dict:
+def file_content(path: str = Query(...), user: User = CurrentUser) -> dict:
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         f = s.scalar(select(File).where(File.repo_id == r.id, File.path == path))
         if f is None:
             raise HTTPException(404, f"File not found: {path}")
@@ -308,13 +351,13 @@ def _first_sentence(doc: str | None) -> str:
 
 
 @router.get("/symbols/index")
-def symbols_index() -> dict:
+def symbols_index(user: User = CurrentUser) -> dict:
     """Lightweight repo-wide symbol table for the Reader's inline intelligence:
     every resolvable definition (name, signature, one-line doc, location) plus its
     fan-in count. The frontend builds name→def and id→def maps from this so hover-
     to-peek and go-to-definition resolve client-side with zero per-token round-trips."""
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         callers = dict(
             s.execute(
                 select(SymbolEdge.dst_symbol_id, func.count())
@@ -353,10 +396,12 @@ def symbols_index() -> dict:
 
 
 @router.get("/symbol/{symbol_id}")
-def symbol_detail(symbol_id: int) -> dict:
+def symbol_detail(symbol_id: int, user: User = CurrentUser) -> dict:
     with session_scope() as s:
         sym = s.get(Symbol, symbol_id)
-        if sym is None:
+        # Ownership check — this route previously fetched ANY symbol in the
+        # database by raw PK with no repo/user check at all.
+        if sym is None or not _owns_repo(s, user, sym.repo_id):
             raise HTTPException(404, "Symbol not found")
 
         def side(edge_col, other_col):
@@ -384,9 +429,9 @@ def symbol_detail(symbol_id: int) -> dict:
 
 @router.get("/graph")
 def graph(level: str = Query("file"), scope: str | None = None,
-          tests: bool = False, neighbors: bool = False) -> dict:
+          tests: bool = False, neighbors: bool = False, user: User = CurrentUser) -> dict:
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         if level == "symbol":
             return export_symbol_graph(s, r.id, path_prefix=scope or None,
                                        include_neighbors=neighbors)
@@ -394,10 +439,10 @@ def graph(level: str = Query("file"), scope: str | None = None,
 
 
 @router.get("/architecture")
-def architecture() -> dict:
+def architecture(user: User = CurrentUser) -> dict:
     from archaeologist.analysis.architecture import build_architecture
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         return build_architecture(s, r.id, r.name)
 
 
@@ -412,12 +457,12 @@ def _clone_path(repo: Repo) -> Path:
 
 
 @router.get("/architecture/refs")
-def architecture_refs() -> dict:
+def architecture_refs(user: User = CurrentUser) -> dict:
     """Tags and recent commits of the active repo, for the delta ref picker."""
     from archaeologist.analysis import arch_delta
 
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         path = _clone_path(r)
     try:
         return arch_delta.list_refs(arch_delta.open_repo(path))
@@ -429,6 +474,7 @@ def architecture_refs() -> dict:
 def architecture_delta(
     base: str = Query(..., description="Ref to compare from — a tag, branch or SHA"),
     head: str = Query(..., description="Ref to compare to"),
+    user: User = CurrentUser,
 ) -> dict:
     """Structural difference between the architecture at two refs.
 
@@ -438,7 +484,7 @@ def architecture_delta(
     from archaeologist.analysis import arch_delta
 
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         path = _clone_path(r)
         repo_id, head_sha = r.id, r.head_sha
         try:
@@ -456,15 +502,15 @@ def architecture_delta(
 
 
 @router.get("/entrypoints")
-def entrypoints() -> dict:
+def entrypoints(user: User = CurrentUser) -> dict:
     from archaeologist.analysis.entrypoints import find_entrypoints
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         return {"entrypoints": find_entrypoints(s, r.id)}
 
 
 @router.get("/wiki")
-def wiki(refresh: bool = False) -> dict:
+def wiki(refresh: bool = False, user: User = CurrentUser) -> dict:
     """Generation itself now makes several LLM calls (page-structure decision +
     one prose call per page — DeepWiki's actual shape), so caching matters even
     more than before: cached per (repo, head_sha), re-ingesting naturally
@@ -473,7 +519,7 @@ def wiki(refresh: bool = False) -> dict:
     just because the model was unavailable or slow."""
     from archaeologist.analysis.wiki import build_wiki
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         if not refresh and r.wiki_cache_sha == r.head_sha and r.wiki_cache:
             return r.wiki_cache
         result = build_wiki(s, r.id, r.name)
@@ -483,49 +529,60 @@ def wiki(refresh: bool = False) -> dict:
 
 
 @router.get("/folders")
-def folders() -> dict:
+def folders(user: User = CurrentUser) -> dict:
     from archaeologist.analysis.folders import folder_heat
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         return folder_heat(s, r.id)
 
 
 @router.get("/dead-code")
-def dead_code() -> dict:
+def dead_code(user: User = CurrentUser) -> dict:
     from archaeologist.analysis.dead_code import find_dead_code
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         return find_dead_code(s, r.id)
 
 
 @router.get("/communities")
-def communities() -> dict:
+def communities(user: User = CurrentUser) -> dict:
     from archaeologist.analysis.communities import find_communities
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         return find_communities(s, r.id)
 
 
 @router.get("/coupling")
-def coupling() -> dict:
+def coupling(user: User = CurrentUser) -> dict:
     from archaeologist.analysis.coupling import find_change_coupling
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         return find_change_coupling(s, r.id)
 
 
 @router.get("/callgraph/{symbol_id}")
-def callgraph(symbol_id: int, depth: int = Query(3, ge=1, le=5)) -> dict:
+def callgraph(symbol_id: int, depth: int = Query(3, ge=1, le=5), user: User = CurrentUser) -> dict:
     from archaeologist.retrieval.graph_queries import call_flow
     with session_scope() as s:
+        sym = s.get(Symbol, symbol_id)
+        # Ownership check — previously called call_flow() on any symbol_id
+        # in the database with no repo/user check at all.
+        if sym is None or not _owns_repo(s, user, sym.repo_id):
+            raise HTTPException(404, "Symbol not found")
         return call_flow(s, symbol_id, depth=depth)
 
 
 @router.get("/impact/{symbol_id}")
-def impact(symbol_id: int) -> dict:
+def impact(symbol_id: int, user: User = CurrentUser) -> dict:
     from archaeologist.analysis.impact import analyze_impact
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
+        sym = s.get(Symbol, symbol_id)
+        # This route already resolved the active repo, but never checked the
+        # requested symbol actually belonged to it — a user could pass any
+        # symbol_id in the database and get another user's impact analysis.
+        if sym is None or sym.repo_id != r.id:
+            raise HTTPException(404, "Symbol not found")
         result = analyze_impact(s, r.id, symbol_id)
         if "error" in result:
             raise HTTPException(404, result["error"])
@@ -533,7 +590,7 @@ def impact(symbol_id: int) -> dict:
 
 
 @router.get("/export/snapshot.html", response_class=HTMLResponse)
-def export_snapshot_html() -> HTMLResponse:
+def export_snapshot_html(user: User = CurrentUser) -> HTMLResponse:
     """A single self-contained HTML file — every core signal (architecture,
     tour, entrypoints, dead code, communities, coupling, file graph) baked in
     as static JSON. Whoever opens it needs no backend, no Docker, no LLM key —
@@ -542,7 +599,7 @@ def export_snapshot_html() -> HTMLResponse:
     from archaeologist.analysis.snapshot import build_snapshot
     from archaeologist.viz.snapshot_html import render_snapshot_html
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         snapshot = build_snapshot(s, r.id, r.name)
     html = render_snapshot_html(snapshot, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
     headers = {"Content-Disposition": f'attachment; filename="{snapshot["repo"]}-snapshot.html"'}
@@ -550,11 +607,13 @@ def export_snapshot_html() -> HTMLResponse:
 
 
 @router.get("/search")
-def search(q: str = Query(...), streams: str | None = None, k: int = 10) -> dict:
+def search(q: str = Query(...), streams: str | None = None, k: int = 10, user: User = CurrentUser) -> dict:
+    with session_scope() as s:
+        repo_id = _repo(s, user).id  # 404s cleanly if this user has no active repo
     stream_list = streams.split(",") if streams else None
     client = get_client()
     embedder = get_embedder()
-    hits = search_all(client, embedder, q, k=k, streams=stream_list)
+    hits = search_all(client, embedder, q, repo_id, k=k, streams=stream_list)
     return {"query": q, "hits": hits}
 
 
@@ -565,10 +624,12 @@ class AskBody(BaseModel):
 
 
 @router.post("/ask")
-def ask(body: AskBody) -> dict:
+def ask(body: AskBody, user: User = CurrentUser) -> dict:
+    with session_scope() as s:
+        repo_id = _repo(s, user).id
     from archaeologist.rag.pipeline import answer_question
     try:
-        res = answer_question(body.question, k=body.k, streams=body.streams)
+        res = answer_question(body.question, repo_id, k=body.k, streams=body.streams)
     except Exception as exc:  # noqa: BLE001 - surface a structured error to the UI
         raise HTTPException(500, f"The LLM call failed: {exc}") from exc
     return {"question": res.question, "answer": res.answer, "evidence": res.evidence}
@@ -587,10 +648,12 @@ class InvestigateBody(BaseModel):
 
 
 @router.post("/investigate")
-def investigate(body: InvestigateBody) -> dict:
+def investigate(body: InvestigateBody, user: User = CurrentUser) -> dict:
+    with session_scope() as s:
+        repo_id = _repo(s, user).id
     from archaeologist.agent.graph import investigate as run
     try:
-        r = run(body.question, max_iterations=body.max_iterations,
+        r = run(body.question, repo_id, max_iterations=body.max_iterations,
                 history=[h.model_dump() for h in body.history], simple=body.simple)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"The investigation failed: {exc}") from exc
@@ -598,21 +661,21 @@ def investigate(body: InvestigateBody) -> dict:
               "evidence": r["evidence"], "trace": r["trace"]}
     if result["answer"]:
         with session_scope() as s:
-            save_conversation(s, _repo(s).id, "investigate", body.question, result)
+            save_conversation(s, _repo(s, user).id, "investigate", body.question, result)
     return result
 
 
 @router.post("/investigate/stream")
-def investigate_stream_endpoint(body: InvestigateBody):
+def investigate_stream_endpoint(body: InvestigateBody, user: User = CurrentUser):
     """Server-sent events: live trace steps, then the answer and evidence.
     The frontend consumes this with fetch + a ReadableStream. Saved to history
     once the stream completes with a real answer (errors aren't saved)."""
     with session_scope() as s:
-        repo_id = _repo(s).id
+        repo_id = _repo(s, user).id
 
     def gen():
         answer, evidence, trace = "", [], []
-        for event in investigate_stream(body.question, max_iterations=body.max_iterations,
+        for event in investigate_stream(body.question, repo_id, max_iterations=body.max_iterations,
                                         history=[h.model_dump() for h in body.history], simple=body.simple):
             etype = event.get("type")
             if etype == "answer":
@@ -635,16 +698,19 @@ def investigate_stream_endpoint(body: InvestigateBody):
 
 
 @router.get("/conversations")
-def conversations(kind: str = Query(...)) -> dict:
+def conversations(kind: str = Query(...), user: User = CurrentUser) -> dict:
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         return {"conversations": list_conversations(s, r.id, kind)}
 
 
 @router.get("/conversations/{conv_id}")
-def conversation_detail(conv_id: int) -> dict:
+def conversation_detail(conv_id: int, user: User = CurrentUser) -> dict:
     with session_scope() as s:
-        c = get_conversation(s, conv_id)
+        # get_conversation now enforces ownership itself (joined through
+        # Conversation.repo_id -> Repo.user_id) — this route used to fetch
+        # any conversation by raw PK with no check at all.
+        c = get_conversation(s, conv_id, user.id)
         if c is None:
             raise HTTPException(404, "Conversation not found")
         return {"id": c.id, "kind": c.kind, "question": c.question,
@@ -652,9 +718,9 @@ def conversation_detail(conv_id: int) -> dict:
 
 
 @router.delete("/conversations/{conv_id}")
-def conversation_delete(conv_id: int) -> dict:
+def conversation_delete(conv_id: int, user: User = CurrentUser) -> dict:
     with session_scope() as s:
-        ok = delete_conversation(s, conv_id)
+        ok = delete_conversation(s, conv_id, user.id)
         if not ok:
             raise HTTPException(404, "Conversation not found")
         return {"deleted": conv_id}
@@ -665,7 +731,7 @@ class PublishConfluenceBody(BaseModel):
 
 
 @router.post("/confluence/publish")
-def publish_confluence(body: PublishConfluenceBody) -> dict:
+def publish_confluence(body: PublishConfluenceBody, user: User = CurrentUser) -> dict:
     """Publish the reviewed wiki sections to Confluence as a tracked background
     job. Nothing is sent until this endpoint fires — the UI collects explicit
     user approval (section checklist) before calling it."""
@@ -673,7 +739,7 @@ def publish_confluence(body: PublishConfluenceBody) -> dict:
         raise HTTPException(400, "Confluence is not configured — set CONFLUENCE_* in .env.")
     from archaeologist.services import confluence_job
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         if not r.wiki_cache:
             raise HTTPException(
                 409, "Generate the wiki first (visit Start Here) before publishing.")
@@ -683,11 +749,12 @@ def publish_confluence(body: PublishConfluenceBody) -> dict:
 
 
 @router.get("/confluence/jobs/{job_id}")
-def confluence_job_status(job_id: str) -> dict:
+def confluence_job_status(job_id: str, user: User = CurrentUser) -> dict:
     from archaeologist.services import confluence_job
     status = confluence_job.job_status(job_id)
-    if status is None:
-        raise HTTPException(404, f"Unknown publish job: {job_id}")
+    with session_scope() as s:
+        if status is None or not _owns_repo(s, user, status["repo_id"]):
+            raise HTTPException(404, f"Unknown publish job: {job_id}")
     return status
 
 
@@ -696,13 +763,13 @@ class ScanWeaknessesBody(BaseModel):
 
 
 @router.post("/weaknesses/scan")
-def scan_weaknesses(body: ScanWeaknessesBody) -> dict:
+def scan_weaknesses(body: ScanWeaknessesBody, user: User = CurrentUser) -> dict:
     """Scan the active repo for weaknesses (LLM, one call per file, capped by
     default) as a tracked background job. Findings land in the weaknesses table
     for review — nothing external happens until tickets are explicitly approved."""
     from archaeologist.services import weakness_scan
     with session_scope() as s:
-        repo_id = _repo(s).id
+        repo_id = _repo(s, user).id
     if not llm_available():
         raise HTTPException(400, "No LLM provider available — configure one in .env to scan.")
     job = weakness_scan.start_scan(repo_id, scan_all=body.scan_all)
@@ -710,7 +777,7 @@ def scan_weaknesses(body: ScanWeaknessesBody) -> dict:
 
 
 @router.get("/weaknesses/scan")
-def current_weakness_scan() -> dict:
+def current_weakness_scan(user: User = CurrentUser) -> dict:
     """The active repo's current scan job, so the UI can re-attach after a
     navigation or a full page reload: the running job if one exists, else the
     most recent finished one, else null.
@@ -722,17 +789,18 @@ def current_weakness_scan() -> dict:
     progress indicator."""
     from archaeologist.services import weakness_scan
     with session_scope() as s:
-        repo_id = _repo(s).id
+        repo_id = _repo(s, user).id
     job = weakness_scan.running_job_for(repo_id) or weakness_scan.latest_job_for(repo_id)
     return {"job": job}
 
 
 @router.get("/weaknesses/scan/{job_id}")
-def weakness_scan_status(job_id: str) -> dict:
+def weakness_scan_status(job_id: str, user: User = CurrentUser) -> dict:
     from archaeologist.services import weakness_scan
     status = weakness_scan.job_status(job_id)
-    if status is None:
-        raise HTTPException(404, f"Unknown scan job: {job_id}")
+    with session_scope() as s:
+        if status is None or not _owns_repo(s, user, status["repo_id"]):
+            raise HTTPException(404, f"Unknown scan job: {job_id}")
     return status
 
 
@@ -765,12 +833,12 @@ _EXT_LANG = {
 
 
 @router.get("/weaknesses")
-def list_weaknesses() -> dict:
+def list_weaknesses(user: User = CurrentUser) -> dict:
     """All persisted findings for the active repo — durable state, unlike the
     ephemeral /dead-code candidates. Snippets are sliced from File.content here,
     at read time."""
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         rows = s.scalars(
             select(Weakness).where(Weakness.repo_id == r.id)
             .order_by(Weakness.status, Weakness.severity, Weakness.file_path, Weakness.start_line)
@@ -801,11 +869,11 @@ def list_weaknesses() -> dict:
 
 
 @router.post("/weaknesses/{weakness_id}/dismiss")
-def dismiss_weakness(weakness_id: int) -> dict:
+def dismiss_weakness(weakness_id: int, user: User = CurrentUser) -> dict:
     """Local status flip — no job needed. A re-scan brings dismissed findings
     back (they're replaced like 'new' rows); only ticketing survives re-scans."""
     with session_scope() as s:
-        r = _repo(s)
+        r = _repo(s, user)
         w = s.get(Weakness, weakness_id)
         if w is None or w.repo_id != r.id:
             raise HTTPException(404, "Finding not found")
@@ -820,7 +888,7 @@ class CreateJiraTicketsBody(BaseModel):
 
 
 @router.post("/jira/tickets")
-def create_jira_tickets(body: CreateJiraTicketsBody) -> dict:
+def create_jira_tickets(body: CreateJiraTicketsBody, user: User = CurrentUser) -> dict:
     """Create Jira issues for the approved findings as a tracked background job.
     Nothing reaches Jira until this fires — the UI collects explicit approval
     via checkboxes first."""
@@ -830,15 +898,16 @@ def create_jira_tickets(body: CreateJiraTicketsBody) -> dict:
         raise HTTPException(422, "Select at least one finding.")
     from archaeologist.services import jira_ticket
     with session_scope() as s:
-        repo_id = _repo(s).id
+        repo_id = _repo(s, user).id
     job = jira_ticket.start_tickets(repo_id, body.finding_ids)
     return {"job_id": job["id"], "status": job["status"]}
 
 
 @router.get("/jira/jobs/{job_id}")
-def jira_ticket_status(job_id: str) -> dict:
+def jira_ticket_status(job_id: str, user: User = CurrentUser) -> dict:
     from archaeologist.services import jira_ticket
     status = jira_ticket.job_status(job_id)
-    if status is None:
-        raise HTTPException(404, f"Unknown ticket job: {job_id}")
+    with session_scope() as s:
+        if status is None or not _owns_repo(s, user, status["repo_id"]):
+            raise HTTPException(404, f"Unknown ticket job: {job_id}")
     return status

@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session, aliased
 from archaeologist.models.entities import Symbol, SymbolEdge
 
 
-def find_symbol(session: Session, qualified_name: str) -> Symbol | None:
-    return session.scalar(select(Symbol).where(Symbol.qualified_name == qualified_name))
+def find_symbol(session: Session, qualified_name: str, repo_id: int) -> Symbol | None:
+    return session.scalar(
+        select(Symbol).where(Symbol.qualified_name == qualified_name, Symbol.repo_id == repo_id)
+    )
 
 
 def who_depends_on(session: Session, symbol_id: int) -> list[tuple[str, Symbol]]:

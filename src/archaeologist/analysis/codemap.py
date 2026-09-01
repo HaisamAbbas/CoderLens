@@ -100,10 +100,10 @@ def _concept_cards(ordered_syms: list[Symbol]) -> list[dict] | None:
     return out
 
 
-def _candidate_ids(session, question, client, embedder, k=10) -> list[int]:
-    lists = [code_index.bm25_hits(client, question, 15)]
+def _candidate_ids(session, question, client, embedder, repo_id, k=10) -> list[int]:
+    lists = [code_index.bm25_hits(client, question, 15, repo_id)]
     if embedder is not None:
-        lists.append(code_index.knn_hits(client, embedder.embed_query(question), 15))
+        lists.append(code_index.knn_hits(client, embedder.embed_query(question), 15, repo_id))
     ids: list[int] = []
     for _id, _score, _src in rrf(lists):
         try:
@@ -169,7 +169,7 @@ def _node(s: Symbol, step: int, note: str, card: dict | None = None) -> dict:
     return n
 
 
-def build_codemap(question: str, max_nodes: int = 22) -> dict:
+def build_codemap(question: str, repo_id: int, max_nodes: int = 22) -> dict:
     client = get_client()
     embedder = get_embedder()
     empty = {"question": question, "title": "", "narrative": "", "nodes": [], "edges": [],
@@ -183,13 +183,12 @@ def build_codemap(question: str, max_nodes: int = 22) -> dict:
     # waiting on the same pool. Nothing after this block issues a new query —
     # it's pure Python over already-loaded Symbol objects.
     with session_scope() as session:
-        cand_ids = _candidate_ids(session, question, client, embedder)
+        cand_ids = _candidate_ids(session, question, client, embedder, repo_id)
         if not cand_ids:
             return {**empty, "title": "No matching code"}
 
         cands = {s.id: s for s in session.scalars(select(Symbol).where(Symbol.id.in_(cand_ids)))}
         ordered = [cands[i] for i in cand_ids if i in cands]
-        repo_id = ordered[0].repo_id
 
         # real edges touching the candidates (+ discover 1-hop neighbors)
         rows = session.execute(
@@ -373,7 +372,7 @@ def explain_edge(source_id: int, target_id: int, question: str = "") -> dict:
         return {"text": fallback}
 
 
-def extend_codemap(question: str, existing_ids: list[int], max_new: int = 10) -> dict:
+def extend_codemap(question: str, existing_ids: list[int], repo_id: int, max_new: int = 10) -> dict:
     """Grow an existing codemap with a follow-up question — finds new, real
     symbols relevant to the follow-up and any real edges connecting them to
     what's already on the map, WITHOUT touching the existing nodes/edges."""
@@ -383,14 +382,14 @@ def extend_codemap(question: str, existing_ids: list[int], max_new: int = 10) ->
     existing = set(existing_ids)
 
     with session_scope() as session:
-        cand_ids = [i for i in _candidate_ids(session, question, client, embedder, k=max_new + 4) if i not in existing]
+        cand_ids = [i for i in _candidate_ids(session, question, client, embedder, repo_id, k=max_new + 4)
+                   if i not in existing]
         cand_ids = cand_ids[:max_new]
         if not cand_ids:
             return empty
         cands = {s.id: s for s in session.scalars(select(Symbol).where(Symbol.id.in_(cand_ids)))}
         if not cands:
             return empty
-        repo_id = next(iter(cands.values())).repo_id
 
         universe_seed = list(cands) + list(existing)
         rows = session.execute(

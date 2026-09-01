@@ -5,6 +5,7 @@ from typing import TypedDict
 
 class InvestigationState(TypedDict):
     question: str
+    repo_id: int                # the caller's active repo — every retrieval call scopes to it
     history: list[dict]         # prior turns this conversation: [{"question","answer"}, ...]
     queries: list[str]          # current search queries (from plan, then grade follow-ups)
     graph_targets: list[str]    # qualified symbol names to expand via the dependency graph

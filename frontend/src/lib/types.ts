@@ -1,3 +1,7 @@
+export interface User {
+  id: number; github_login: string; email: string | null; avatar_url: string | null;
+}
+
 export interface Counts { files: number; symbols: number; commits: number; issues: number; edges: number; }
 export interface Repo {
   id: number; name: string; url: string; default_branch: string | null;
