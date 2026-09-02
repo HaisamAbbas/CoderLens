@@ -105,7 +105,17 @@ def _run(job_id: str, repo_url: str, user_id: int, token: str = "") -> None:
     try:
         _pipeline(job_id, repo_url, user_id, token)
         _update(job_id, status="done", step="", message="Ingest complete")
-    except Exception as exc:  # noqa: BLE001 - surface any failure on the job
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 - surface any failure on the job
+        # SystemExit is deliberately included: extract_to_postgres/build_graph/
+        # build_evidence_index and friends were written as CLI-first scripts
+        # and use `raise SystemExit("message")` for their "no repo/no symbols"
+        # guard clauses — correct, clean CLI-exit behavior there, but
+        # SystemExit inherits from BaseException, not Exception, so a plain
+        # `except Exception` here never caught it. A repo that produces zero
+        # symbols (docs-only, an unsupported language, ...) hit exactly this:
+        # the guard raised, propagated straight out of this thread uncaught,
+        # and the job sat at status="running" forever with no error and no
+        # timeout to save it — reproduced live against a real tiny repo.
         status = job_status(job_id)
         step = status["step"] if status else ""
         _update(job_id, status="error", step="", error=str(exc), message=f"Failed at step {step or 'start'}")
