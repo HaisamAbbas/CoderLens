@@ -36,6 +36,7 @@ def export_file_graph(
     session: Session, repo_id: int, exclude_tests: bool = False,
     min_weight: int = 1, top_groups: int = 3, max_nodes: int | None = None,
     group_by: str = "dir", community_of: dict[str, int] | None = None,
+    path_prefix: str | None = None,
 ) -> dict:
     symbols = {s.id: s for s in session.scalars(select(Symbol).where(Symbol.repo_id == repo_id))}
 
@@ -51,6 +52,11 @@ def export_file_graph(
         if not src or not dst or src.file_path == dst.file_path:
             continue
         if exclude_tests and (src.file_path.startswith("tests/") or dst.file_path.startswith("tests/")):
+            continue
+        # Both endpoints must be inside the scope — same "subgraph of that
+        # directory" semantics as export_symbol_graph's own path_prefix.
+        if path_prefix and not (src.file_path.startswith(path_prefix)
+                                and dst.file_path.startswith(path_prefix)):
             continue
         weights[(src.file_path, dst.file_path)] += 1
 
@@ -176,7 +182,8 @@ def export_symbol_graph(session: Session, repo_id: int, path_prefix: str | None 
     # symbol view with no path_prefix to scope it down naturally.
     if not path_prefix and total_symbols > max_nodes:
         connected = set(sorted(connected, key=lambda sid: -degree[sid])[:max_nodes])
-        links = [link for link in links if link["source"] in connected and link["target"] in connected]
+        links = [link for link in links
+                if link["source"] in connected and link["target"] in connected]
         truncated = True
 
     nodes = []

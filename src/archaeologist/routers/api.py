@@ -505,7 +505,8 @@ def graph(
             from archaeologist.analysis.communities import community_by_file
             community_of = community_by_file(s, r.id)
         return export_file_graph(s, r.id, exclude_tests=not tests, min_weight=min_weight,
-                                 max_nodes=max_nodes, group_by=group_by, community_of=community_of)
+                                 max_nodes=max_nodes, group_by=group_by, community_of=community_of,
+                                 path_prefix=scope or None)
 
 
 @router.get("/architecture")
