@@ -19,6 +19,19 @@ _ollama_checked_at = 0.0
 _ollama_ok = False
 
 
+def _scrub(text: str, *secrets: str) -> str:
+    """Mask any of `secrets` (an API key) out of `text` before it becomes an
+    exception message — matches ingestion/repository.py's own token-masking
+    for clone failures. httpx's own exception messages don't normally echo
+    request headers, but a provider's response body could (a proxy/gateway
+    debug echo, an unusual error format) — this is a cheap, unconditional
+    backstop regardless of the actual cause."""
+    for s in secrets:
+        if s:
+            text = text.replace(s, "***")
+    return text
+
+
 def ollama_available() -> bool:
     """Is a local Ollama server reachable? Result is cached for 30s so the
     frequent availability checks don't add a network round-trip each time."""
@@ -246,7 +259,7 @@ def _call_openrouter(system: str, user: str, max_tokens: int, temperature: float
             if attempt == 2:
                 break
             time.sleep(3 * (attempt + 1))
-    raise RuntimeError(f"OpenRouter request failed: {last_exc}") from last_exc
+    raise RuntimeError(_scrub(f"OpenRouter request failed: {last_exc}", settings.openrouter_api_key)) from last_exc
 
 
 def _call_alibaba(system: str, user: str, max_tokens: int, temperature: float) -> str:
@@ -285,7 +298,7 @@ def _call_alibaba(system: str, user: str, max_tokens: int, temperature: float) -
             if attempt == 2:
                 break
             time.sleep(3 * (attempt + 1))
-    raise RuntimeError(f"Alibaba Model Studio request failed: {last_exc}") from last_exc
+    raise RuntimeError(_scrub(f"Alibaba Model Studio request failed: {last_exc}", settings.alibaba_api_key)) from last_exc
 
 
 _AIHUBMIX_URL = "https://aihubmix.com/v1"
@@ -326,7 +339,7 @@ def _call_aihubmix(system: str, user: str, max_tokens: int, temperature: float) 
             if attempt == 2:
                 break
             time.sleep(3 * (attempt + 1))
-    raise RuntimeError(f"AIHubMix request failed: {last_exc}") from last_exc
+    raise RuntimeError(_scrub(f"AIHubMix request failed: {last_exc}", settings.aihubmix_api_key)) from last_exc
 
 
 _ZAI_URL = "https://api.z.ai/api/paas/v4"
@@ -374,7 +387,7 @@ def _call_zai(system: str, user: str, max_tokens: int, temperature: float) -> st
             if attempt == 2:
                 break
             time.sleep(3 * (attempt + 1))
-    raise RuntimeError(f"Z.AI request failed: {last_exc}") from last_exc
+    raise RuntimeError(_scrub(f"Z.AI request failed: {last_exc}", settings.zai_api_key)) from last_exc
 
 
 def call_llm_stream(system: str, user: str, max_tokens: int = 1024, temperature: float = 0.0,
