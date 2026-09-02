@@ -1,17 +1,17 @@
 """Export the dependency graph as a generic {nodes, links, groups} shape that the
 renderer consumes for both the file-level atlas and the symbol-level zoom.
 
-Node schema: {id, label, meta, group, degree, stats:[[label,value],...]}
+Node schema: {id, label, meta, group, degree, churn, stats:[[label,value],...]}
 Link schema: {source, target, weight}
-Top level:  {nodes, links, groups:[{key,label}], subtitle}
+Top level:  {nodes, links, groups:[{key,label}], subtitle, truncated, total_nodes}
 """
 
 from collections import defaultdict
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from archaeologist.models.entities import Symbol, SymbolEdge
+from archaeologist.models.entities import CommitFile, Symbol, SymbolEdge
 
 
 def _dirname(path: str) -> str:
@@ -23,8 +23,20 @@ def _short(module: str) -> str:
     return "/".join(parts[-2:]) if len(parts) > 2 else module
 
 
-def export_file_graph(session: Session, repo_id: int, exclude_tests: bool = False,
-                      min_weight: int = 1, top_groups: int = 3) -> dict:
+def _churn_by_file(session: Session, repo_id: int) -> dict[str, int]:
+    """Commits touching each file — same signal Overview's hotspots use, so
+    a file that looks risky there looks the same way here."""
+    return dict(session.execute(
+        select(CommitFile.path, func.count()).where(CommitFile.repo_id == repo_id)
+        .group_by(CommitFile.path)
+    ).all())
+
+
+def export_file_graph(
+    session: Session, repo_id: int, exclude_tests: bool = False,
+    min_weight: int = 1, top_groups: int = 3, max_nodes: int | None = None,
+    group_by: str = "dir", community_of: dict[str, int] | None = None,
+) -> dict:
     symbols = {s.id: s for s in session.scalars(select(Symbol).where(Symbol.repo_id == repo_id))}
 
     symbol_count: dict[str, int] = defaultdict(int)
@@ -51,30 +63,70 @@ def export_file_graph(session: Session, repo_id: int, exclude_tests: bool = Fals
         degree[link["target"]] += link["weight"]
     files = sorted({link["source"] for link in links} | {link["target"] for link in links})
 
-    # Colour by the most-connected directories (summed degree); rest -> 'other'.
-    dir_degree: dict[str, int] = defaultdict(int)
-    for f in files:
-        dir_degree[_dirname(f)] += degree.get(f, 0)
-    top_dirs = [d for d, _ in sorted(dir_degree.items(), key=lambda kv: -kv[1])[:top_groups]]
-    groups = [{"key": d, "label": _short(d)} for d in top_dirs]
-    has_other = any(_dirname(f) not in top_dirs for f in files)
-    if has_other:
-        groups.append({"key": "other", "label": "other"})
+    total_files = len(files)
+    truncated = False
+    # A repo with thousands of interconnected files makes the force layout an
+    # unreadable hairball no styling fixes — cap to the most-connected files
+    # (degree computed from the FULL edge set above, so a kept node's size
+    # still reflects its true connectivity, not just connectivity within the
+    # trimmed subgraph) rather than let the client try to render everything.
+    if max_nodes is not None and total_files > max_nodes:
+        files = sorted(files, key=lambda f: -degree[f])[:max_nodes]
+        kept = set(files)
+        links = [link for link in links if link["source"] in kept and link["target"] in kept]
+        files.sort()
+        truncated = True
+
+    churn = _churn_by_file(session, repo_id)
+
+    if group_by == "community" and community_of:
+        # Community ids come pre-ranked by cluster size (see
+        # analysis.communities.community_by_file) — the first `top_groups`
+        # get their own color, the rest (including files with no community,
+        # id -1) fall back to "other", same shape as directory-mode below.
+        top_keys = list(range(top_groups))
+        groups = [{"key": str(k), "label": f"Cluster {k + 1}"} for k in top_keys
+                  if any(community_of.get(f) == k for f in files)]
+        has_other = any(community_of.get(f, -1) not in top_keys for f in files)
+        if has_other:
+            groups.append({"key": "other", "label": "other"})
+
+        def group_of(f: str) -> str:
+            c = community_of.get(f, -1)
+            return str(c) if c in top_keys else "other"
+    else:
+        # Colour by the most-connected directories (summed degree); rest -> 'other'.
+        dir_degree: dict[str, int] = defaultdict(int)
+        for f in files:
+            dir_degree[_dirname(f)] += degree.get(f, 0)
+        top_dirs = [d for d, _ in sorted(dir_degree.items(), key=lambda kv: -kv[1])[:top_groups]]
+        groups = [{"key": d, "label": _short(d)} for d in top_dirs]
+        has_other = any(_dirname(f) not in top_dirs for f in files)
+        if has_other:
+            groups.append({"key": "other", "label": "other"})
+
+        def group_of(f: str) -> str:
+            d = _dirname(f)
+            return d if d in top_dirs else "other"
 
     nodes = []
     for f in files:
-        d = _dirname(f)
         nodes.append({
             "id": f,
             "label": f.rsplit("/", 1)[-1],
             "meta": f,
-            "group": d if d in top_dirs else "other",
+            "group": group_of(f),
             "degree": degree.get(f, 0),
-            "stats": [["symbols", symbol_count.get(f, 0)], ["connections", degree.get(f, 0)]],
+            "churn": churn.get(f, 0),
+            "stats": [["symbols", symbol_count.get(f, 0)], ["connections", degree.get(f, 0)],
+                     ["commits touching it", churn.get(f, 0)]],
         })
-    return {"nodes": nodes, "links": links, "groups": groups,
-            "subtitle": "Each node is a file, sized by how connected it is, coloured by module. "
-                        "Click a file to see what breaks if you remove it."}
+    subtitle = ("Each node is a file, sized by how connected it is, coloured by module. "
+               "Click a file to see what breaks if you remove it.")
+    if truncated:
+        subtitle += f" Showing the {len(files)} most-connected of {total_files} files."
+    return {"nodes": nodes, "links": links, "groups": groups, "subtitle": subtitle,
+            "truncated": truncated, "total_nodes": total_files}
 
 
 def export_symbol_graph(session: Session, repo_id: int, path_prefix: str | None = None,
@@ -118,6 +170,15 @@ def export_symbol_graph(session: Session, repo_id: int, path_prefix: str | None 
             degree[e.dst_symbol_id] += 1
 
     connected = {link["source"] for link in links} | {link["target"] for link in links}
+    total_symbols = len(connected)
+    truncated = False
+    # Same "no readable hairball" cap as the file graph, for a whole-repo
+    # symbol view with no path_prefix to scope it down naturally.
+    if not path_prefix and total_symbols > max_nodes:
+        connected = set(sorted(connected, key=lambda sid: -degree[sid])[:max_nodes])
+        links = [link for link in links if link["source"] in connected and link["target"] in connected]
+        truncated = True
+
     nodes = []
     for sid in connected:
         s = symbols[sid]
@@ -135,9 +196,12 @@ def export_symbol_graph(session: Session, repo_id: int, path_prefix: str | None 
               {"key": "method", "label": "Methods"},
               {"key": "function", "label": "Functions"}]
     scope = path_prefix or "the whole repo"
-    return {"nodes": nodes, "links": links, "groups": groups,
-            "subtitle": f"Symbols in {scope} — calls and inheritance. "
-                        "Click a symbol to see its callers and callees."}
+    subtitle = (f"Symbols in {scope} — calls and inheritance. "
+               "Click a symbol to see its callers and callees.")
+    if truncated:
+        subtitle += f" Showing the {len(connected)} most-connected of {total_symbols} symbols."
+    return {"nodes": nodes, "links": links, "groups": groups, "subtitle": subtitle,
+            "truncated": truncated, "total_nodes": total_symbols}
 
 
 def export_combined(session: Session, repo_id: int, exclude_tests: bool = False) -> dict:

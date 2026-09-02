@@ -487,14 +487,25 @@ def symbol_detail(symbol_id: int, user: User = CurrentUser) -> dict:
 
 
 @router.get("/graph")
-def graph(level: str = Query("file"), scope: str | None = None,
-          tests: bool = False, neighbors: bool = False, user: User = CurrentUser) -> dict:
+def graph(
+    level: str = Query("file"), scope: str | None = None,
+    tests: bool = False, neighbors: bool = False,
+    min_weight: int = Query(1, ge=1, le=50),
+    max_nodes: int = Query(250, ge=10, le=2000),
+    group_by: str = Query("dir", pattern="^(dir|community)$"),
+    user: User = CurrentUser,
+) -> dict:
     with session_scope() as s:
         r = _repo(s, user)
         if level == "symbol":
             return export_symbol_graph(s, r.id, path_prefix=scope or None,
-                                       include_neighbors=neighbors)
-        return export_file_graph(s, r.id, exclude_tests=not tests)
+                                       include_neighbors=neighbors, max_nodes=max_nodes)
+        community_of = None
+        if group_by == "community":
+            from archaeologist.analysis.communities import community_by_file
+            community_of = community_by_file(s, r.id)
+        return export_file_graph(s, r.id, exclude_tests=not tests, min_weight=min_weight,
+                                 max_nodes=max_nodes, group_by=group_by, community_of=community_of)
 
 
 @router.get("/architecture")
