@@ -1,34 +1,44 @@
+import type { CSSProperties, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
-import Treemap, { type TreemapItem } from "../components/Treemap";
 import SectionHead from "../components/SectionHead";
 import { ErrorState, PageLoading } from "../components/PageState";
 import { usePersona } from "../lib/usePersona";
 import {
-  BoltIcon, ClusterIcon, FlagIcon, FlameIcon, GhostIcon,
-  LayersIcon, LinkIcon, RouteIcon,
+  BoltIcon, ChatIcon, ClusterIcon, CodeIcon, FileIcon, FlagIcon,
+  GhostIcon, HistoryIcon, LayersIcon, LinkIcon, RouteIcon, TargetIcon,
 } from "../components/icons";
 import type { CouplingPair, Entrypoint } from "../lib/types";
 
-const ENTRY_META: Record<string, { label: string; color: string }> = {
-  route: { label: "HTTP routes", color: "var(--s-code)" },
-  factory: { label: "App factories", color: "var(--s-issue)" },
-  cli: { label: "CLI commands", color: "var(--s-graph)" },
-  worker: { label: "Background tasks", color: "var(--s-commit)" },
-  main: { label: "main()", color: "var(--c-core)" },
-  module: { label: "Script entries", color: "var(--text-3)" },
+const ENTRY_META: Record<string, { label: string; singular: string; color: string }> = {
+  route: { label: "HTTP routes", singular: "route", color: "var(--s-code)" },
+  factory: { label: "App factories", singular: "factory", color: "var(--s-issue)" },
+  cli: { label: "CLI commands", singular: "command", color: "var(--s-graph)" },
+  worker: { label: "Background tasks", singular: "task", color: "var(--s-commit)" },
+  main: { label: "main()", singular: "entry", color: "var(--c-core)" },
+  module: { label: "Script entries", singular: "script", color: "var(--text-3)" },
 };
 const ENTRY_ORDER = ["route", "factory", "cli", "worker", "main", "module"];
+
+// Purely decorative rotation for the directory-chip legend — gives the
+// architecture card some visual variety instead of every chip sharing one
+// flat gray dot, with no change to the underlying data.
+const DIR_PALETTE = [
+  "var(--accent)", "var(--s-commit)", "var(--good)", "var(--s-issue)", "var(--s-graph)", "var(--s-doc)",
+];
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const short = (p: string) => p.replace(/^src\//, "");
 
-function Stat({ n, l, mono, accent }: { n: number | string; l: string; mono?: boolean; accent?: boolean }) {
+function Kpi({ icon, n, l, tone }: { icon: ReactNode; n: number; l: string; tone: string }) {
   return (
-    <div className={"ov-stat" + (accent ? " accent" : "")}>
-      <div className={"n" + (mono ? " mono" : " tnum")}>{typeof n === "number" ? n.toLocaleString() : n}</div>
-      <div className="l">{l}</div>
+    <div className="kpi" style={{ "--kpi-tone": tone } as CSSProperties}>
+      <span className="kpi-icon" style={{ background: `color-mix(in srgb, ${tone} 15%, transparent)`, color: tone }}>
+        {icon}
+      </span>
+      <div className="kpi-n tnum">{n.toLocaleString()}</div>
+      <div className="kpi-l">{l}</div>
     </div>
   );
 }
@@ -57,13 +67,14 @@ export default function Overview() {
       <p className="arch">
         {cap(data.name)} spans <b>{data.counts.files} files</b> and{" "}
         <span className="k">{data.counts.symbols.toLocaleString()}</span> symbols, wired together by{" "}
-        <b>{data.counts.edges.toLocaleString()} internal dependencies</b>. Its most connected module is{" "}
-        <span className="k">{data.most_central}</span> — the files below carry the most connections and
-        are the best place to start reading.
+        <b>{data.counts.edges.toLocaleString()} internal dependencies</b>. The files below carry the most
+        connections and are the best place to start reading.
       </p>
       <div className="chips">
-        {dirs.map((d) => (
-          <span key={d} className="chip"><span className="dot" style={{ background: "var(--text-3)" }} />{d}</span>
+        {dirs.map((d, i) => (
+          <span key={d} className="chip">
+            <span className="dot" style={{ background: DIR_PALETTE[i % DIR_PALETTE.length] }} />{d || "/"}
+          </span>
         ))}
       </div>
     </div>
@@ -72,34 +83,15 @@ export default function Overview() {
   const readingCard = (
     <div className="card">
       <SectionHead icon={<RouteIcon />} title="Start here — a reading path" cap="Ordered by how central each file is to the system" tone="var(--text-3)" />
-      <ol className="reading">
-        {data.reading_path.map((r) => (
-          <li key={r.path} onClick={() => openFile(r.path)}>
-            <div>
-              <div className="f">{short(r.path)}</div>
-              <div className="why">{r.reason}</div>
-            </div>
-          </li>
+      <div className="ov-steps">
+        {data.reading_path.map((r, i) => (
+          <button key={r.path} className="ov-step" onClick={() => openFile(r.path)}>
+            <span className="ov-step-n tnum">{i + 1}</span>
+            <span className="ov-step-f">{short(r.path)}</span>
+            <span className="ov-step-why">{r.reason}</span>
+          </button>
         ))}
-      </ol>
-    </div>
-  );
-
-  const hotspotsCard = persona !== "new" && (
-    <div className="card">
-      <SectionHead icon={<FlameIcon />} title="Hotspots" cap="High churn × coupling — box size = risk, click to open" tone="var(--warn)" />
-      <Treemap
-        height={168}
-        items={data.hotspots.map((h): TreemapItem => ({
-          key: h.path,
-          label: short(h.path),
-          sub: `${h.churn} changes · ${h.coupling} deps`,
-          value: Math.max(h.score, 0.04),
-          tint: `color-mix(in srgb, var(--warn) ${Math.round(24 + h.score * 56)}%, var(--surface))`,
-          title: `${h.path} — ${h.churn} changes · ${h.coupling} dependencies`,
-          onClick: () => openFile(h.path),
-        }))}
-      />
+      </div>
     </div>
   );
 
@@ -125,34 +117,53 @@ export default function Overview() {
     </div>
   );
 
-  const rail = [hotspotsCard, couplingCard, deepDiveCard].filter(Boolean);
+  const rail = [couplingCard, deepDiveCard].filter(Boolean);
 
   return (
     <div className="page mat ov-page">
       <div className="ov-hero">
-        <div className="ov-hero-info">
+        <div className="ov-hero-glow" aria-hidden />
+        <div className="ov-hero-body">
           <div className="eyebrow">Overview</div>
           <h1 className="h1" style={{ marginTop: 6 }}>{cap(data.name)}</h1>
           <p className="lede">
             A map of how this codebase fits together — where to start reading, what's central, and what to
             change carefully. Reconstructed from the code, its git history, and its docs.
           </p>
+          {data.url && (
+            <a className="ov-repo-link" href={data.url} target="_blank" rel="noreferrer">
+              <LinkIcon />{data.url.replace(/^https?:\/\//, "")}
+            </a>
+          )}
         </div>
-        <div className="ov-hero-stats">
-          <Stat n={data.counts.files} l="Files" />
-          <Stat n={data.counts.symbols} l="Symbols" />
-          <Stat n={data.counts.edges} l="Dependencies" />
-          <Stat n={data.most_central} l="Most central" mono accent />
-        </div>
+        {persona === "new" && (
+          <div className="ov-cta">
+            <FlagIcon />
+            <div>
+              <div className="ov-cta-t">New to this codebase?</div>
+              <div className="ov-cta-s">The guided tour walks you through it step by step.</div>
+            </div>
+            <button className="btn primary" onClick={() => nav("/tour")}>Start the tour</button>
+          </div>
+        )}
       </div>
 
-      {persona === "new" && (
-        <div className="ov-banner">
-          <FlagIcon />
-          <span>New to this codebase? The guided tour walks you through it step by step.</span>
-          <button className="btn primary" onClick={() => nav("/tour")}>Start the tour</button>
+      <div className="kpi-row">
+        <Kpi icon={<FileIcon />} n={data.counts.files} l="Files" tone="var(--accent)" />
+        <Kpi icon={<CodeIcon />} n={data.counts.symbols} l="Symbols" tone="var(--s-graph)" />
+        <Kpi icon={<LinkIcon />} n={data.counts.edges} l="Dependencies" tone="var(--good)" />
+        <Kpi icon={<HistoryIcon />} n={data.counts.commits} l="Commits" tone="var(--s-commit)" />
+        <Kpi icon={<ChatIcon />} n={data.counts.issues} l="Issues & PRs" tone="var(--s-issue)" />
+      </div>
+
+      <button className="ov-spotlight" onClick={() => openFile(data.reading_path[0]?.path ?? "")}>
+        <span className="ov-spotlight-icon"><TargetIcon /></span>
+        <div className="ov-spotlight-text">
+          <div className="ov-spotlight-l">Most central module</div>
+          <div className="ov-spotlight-v">{data.most_central}</div>
         </div>
-      )}
+        <span className="ov-spotlight-cta">Open the reading path below →</span>
+      </button>
 
       {rail.length > 0 ? (
         <div className="ov-grid">
@@ -186,21 +197,25 @@ function CouplingCard({
   pairs, windowed, windowDays, onOpen,
 }: { pairs: CouplingPair[]; windowed?: boolean; windowDays: number | null | undefined; onOpen: (path: string) => void }) {
   if (!pairs.length) return null;
+  const max = Math.max(...pairs.map((p) => p.co_changes));
   return (
     <div className="card">
       <SectionHead
         icon={<LinkIcon />} tone="var(--text-3)" title="Change coupling"
-        cap={`Files that change together in the same commit${windowed && windowDays ? ` · last ${windowDays} days` : " · full history"} — a signal independent of imports`}
+        cap={`Files that change together in the same commit${windowed && windowDays ? ` · last ${windowDays} days` : " · full history"}`}
       />
-      <div className="co-list">
+      <div className="co-grid">
         {pairs.map((p) => (
-          <div className="co-row" key={p.a + p.b}>
-            <div className="co-files">
-              <span className="co-f" onClick={() => onOpen(p.a)}>{short(p.a)}</span>
-              <span className="co-x">×</span>
-              <span className="co-f" onClick={() => onOpen(p.b)}>{short(p.b)}</span>
+          <div className="co-pair" key={p.a + p.b}>
+            <div className="co-top">
+              <div className="co-files">
+                <span className="co-f" onClick={() => onOpen(p.a)}>{short(p.a)}</span>
+                <span className="co-x">↔</span>
+                <span className="co-f" onClick={() => onOpen(p.b)}>{short(p.b)}</span>
+              </div>
+              <span className="co-badge tnum">{p.co_changes}×</span>
             </div>
-            <span className="co-meta tnum">{p.co_changes} commits together</span>
+            <div className="co-bar"><span style={{ width: `${Math.max(8, (p.co_changes / max) * 100)}%` }} /></div>
           </div>
         ))}
       </div>
@@ -215,24 +230,25 @@ function Entrypoints({ items, onOpen }: { items: Entrypoint[]; onOpen: (e: Entry
     .filter(([, v]) => v.length);
   return (
     <div className="card ov-entrypoints">
-      <SectionHead icon={<BoltIcon />} title="Entrypoints" cap="Where execution begins — click one to trace its call flow" tone="var(--text-3)" />
-      <div className="ep-groups">
+      <SectionHead icon={<BoltIcon />} title="Entrypoints" cap="Where execution begins, grouped by kind — click a category to trace its call flow" tone="var(--text-3)" />
+      <div className="ep-tiles">
         {groups.map(([kind, list]) => {
           const meta = ENTRY_META[kind];
+          const sample = list.slice(0, 3).map((e) => e.label).join(", ");
           return (
-            <div className="ep-group" key={kind}>
-              <div className="gh"><b>{meta.label}</b> · {list.length}</div>
-              <div className="ep-list">
-                {list.slice(0, 12).map((e, i) => (
-                  <div className="ep" key={kind + i} onClick={() => onOpen(e)}>
-                    <span className="tag" style={{ background: `color-mix(in srgb, ${meta.color} 16%, transparent)`, color: meta.color }}>{kind}</span>
-                    <span className="lab">{e.label}</span>
-                    <span className="loc">{e.path.split("/").pop()}:{e.line}</span>
-                  </div>
-                ))}
-                {list.length > 12 && <div style={{ fontSize: 12, color: "var(--text-3)", padding: "4px 10px" }}>+{list.length - 12} more</div>}
+            <button
+              className="ep-tile" key={kind} onClick={() => onOpen(list[0])}
+              style={{ "--ep-tone": meta.color } as CSSProperties}
+            >
+              <span className="ep-tile-top">
+                <span className="ep-tile-dot" style={{ background: meta.color }} />
+                <span className="ep-tile-n tnum">{list.length}</span>
+              </span>
+              <div className="ep-tile-l">{meta.label}</div>
+              <div className="ep-tile-sample" title={sample}>
+                {sample}{list.length > 3 ? `, +${list.length - 3} more` : ""}
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
