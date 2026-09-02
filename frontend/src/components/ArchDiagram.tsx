@@ -254,13 +254,19 @@ export default function ArchDiagram({
     const roles = [...tally.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
     const groupW = cols.length * (NW + COLGAP) - COLGAP + PAD * 2;
+    // The header (title + "ARCH DELTA" label) needs its own minimum width
+    // independent of the module boxes — a diagram with few/small modules
+    // (few real facts to draw) but a long two-full-sha title used to render
+    // narrower than that title, so the right-anchored "ARCH DELTA" label
+    // collided with the title's own overflow instead of sitting past it.
+    const minHeaderW = PAD + Math.min(title.length, 52) * 13 + 24 + 100;
     return {
       shown, drawn, pos, hidden, roles, roleBy, droppedEdges,
-      width: groupW + PAD * 2,
+      width: Math.max(groupW + PAD * 2, minHeaderW),
       height: HEAD_H + totalH + PAD * 2 + LEGEND_H,
       groupW, groupH: totalH + PAD * 2,
     };
-  }, [nodes, edges]);
+  }, [nodes, edges, title]);
 
   const tonesUsed = useMemo(() => {
     const seen = new Set<Tone>(view.shown.map((n) => n.tone));

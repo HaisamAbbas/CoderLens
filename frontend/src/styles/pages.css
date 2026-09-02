@@ -576,8 +576,14 @@
 .ad-key.ad-changed { background: #fef3c7; border: 1px solid #d97706; }
 .ad-key.ad-kept { background: #f1f5f9; border: 1px solid #94a3b8; }
 .axd { position: relative; }
-.axd-scroll { overflow-x: auto; padding: 4px; }
-.axd-scroll svg { display: block; max-width: 100%; height: auto; }
+/* A diagram narrower than its card (few modules, a small repo) used to sit
+   flush left, leaving the rest of the card as dead white space — flex +
+   center fixes that for the common case while still scrolling normally
+   when the diagram is WIDER than the card (overflow-x still applies, and a
+   flex child that overflows its row just scrolls, centering has no effect
+   on it either way). */
+.axd-scroll { overflow-x: auto; padding: 4px; display: flex; justify-content: center; }
+.axd-scroll svg { display: block; max-width: 100%; height: auto; flex-shrink: 0; }
 .axd-bar { position: absolute; top: 10px; right: 12px; z-index: 1; display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
 .axd:hover .axd-bar, .axd-bar:focus-within { opacity: 1; }
 .axd-bar button {
