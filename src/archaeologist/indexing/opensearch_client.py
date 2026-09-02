@@ -16,7 +16,12 @@ def get_client() -> OpenSearch:
             (settings.opensearch_user, settings.opensearch_password)
             if settings.opensearch_user else None
         ),
-        verify_certs=False,
-        ssl_show_warn=False,
+        # Only meaningful when use_ssl is actually on (local dev's plain-HTTP
+        # instance never TLS-handshakes at all, so this is a no-op there) —
+        # when it IS on (a hosted instance in production), verify the
+        # certificate by default instead of accepting any cert silently,
+        # which would let a MITM on that connection go undetected.
+        verify_certs=settings.opensearch_use_ssl,
+        ssl_show_warn=settings.opensearch_use_ssl,
         timeout=30,
     )
