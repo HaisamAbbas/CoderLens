@@ -192,9 +192,16 @@ button { font-family: inherit; }
 .chip.solid { border-color: transparent; }
 
 .btn {
+  display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
   border-radius: var(--r-sm); padding: 8px 13px; font-size: 13px; font-weight: 500; cursor: pointer;
   transition: border-color 0.12s, background 0.12s;
+  /* .btn is also used on <a> tags (Login/Settings sign-in links, Weaknesses'
+     Jira link) — <a>'s default display is inline, which silently ignores
+     vertical margin/padding for layout, so an inline .btn <a> could overlap
+     the text above it instead of respecting its own spacing. <button>
+     already defaults near inline-block, so this is a no-op there. */
+  text-decoration: none;
 }
 .btn:hover { border-color: var(--border-strong); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
