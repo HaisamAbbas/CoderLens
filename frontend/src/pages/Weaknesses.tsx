@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { safeHref } from "../lib/safeHref";
 import { PageLoading, ErrorState } from "../components/PageState";
 import WikiCode from "../components/WikiCode";
 import type {
@@ -314,8 +315,8 @@ function FindingList(
                   Dismiss
                 </button>
               )}
-              {w.status === "ticketed" && w.jira_url && (
-                <a className="btn" href={w.jira_url} target="_blank" rel="noreferrer"
+              {w.status === "ticketed" && safeHref(w.jira_url) && (
+                <a className="btn" href={safeHref(w.jira_url)} target="_blank" rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}>
                   View in Jira
                 </a>

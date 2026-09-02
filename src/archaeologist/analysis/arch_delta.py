@@ -25,6 +25,7 @@ from pathlib import Path
 import git
 
 from archaeologist.analysis.architecture import shape_from_paths
+from archaeologist.analysis.wiki import _mm_txt
 
 # Cap on facts of any one kind carried in a receipt. A rename of a large package
 # can move hundreds of files; the counts stay exact (they are computed before
@@ -271,20 +272,25 @@ def mermaid_delta(delta: dict, before: dict, after: dict) -> str | None:
     changed_by = {c["submodule"]: c for c in delta["submodules_changed"]}
     lines = ["flowchart LR"]
     pkg = after["package"] or before["package"] or "repository"
-    lines.append(f'  root["{pkg}"]')
+    lines.append(f'  root["{_mm_txt(pkg, 40)}"]')
 
     for sub in sorted(a_subs | b_subs):
         nid = _node_id(sub)
+        # Submodule/package names come straight from repo file paths — run
+        # every label through _mm_txt (drops quotes/brackets/angle-brackets)
+        # before it lands in a diagram the frontend renders with
+        # dangerouslySetInnerHTML, same rule wiki.py's own diagrams follow.
+        safe_sub = _mm_txt(sub, 40)
         if sub in a_subs and sub not in b_subs:
-            label, cls = f"{sub}<br/>added", "added"
+            label, cls = f"{safe_sub}<br/>added", "added"
         elif sub in b_subs and sub not in a_subs:
-            label, cls = f"{sub}<br/>removed", "removed"
+            label, cls = f"{safe_sub}<br/>removed", "removed"
         elif sub in changed_by:
             c = changed_by[sub]
-            label = f"{sub}<br/>+{c['files_added']} / -{c['files_removed']}"
+            label = f"{safe_sub}<br/>+{c['files_added']} / -{c['files_removed']}"
             cls = "changed"
         else:
-            label, cls = sub, "kept"
+            label, cls = safe_sub, "kept"
         lines.append(f'  {nid}["{label}"]')
         lines.append(f"  root --> {nid}")
         lines.append(f"  class {nid} {cls};")

@@ -9,6 +9,7 @@ its symbols in-place (works even as a static, offline artifact).
 - render_linked() / render_linked_page() file graph + drill-into-symbols
 """
 
+import html
 import json
 
 _TEMPLATE = r"""<title>__TITLE__</title>
@@ -284,17 +285,35 @@ draw();
 """
 
 
+def _js_json(obj) -> str:
+    """JSON safe to embed inside a <script> block. `files`/`sym` here are
+    built from real repository data (file paths, symbol names) — an
+    attacker-supplied repo can legally name a file or symbol anything,
+    including `</script>` or HTML markup, and json.dumps() escapes neither.
+    Escaping <, >, & to \\u-sequences keeps a JSON value byte-for-byte
+    equivalent (JSON.parse doesn't care) while making it impossible for the
+    embedded text to end the script block or be reparsed as markup."""
+    return (json.dumps(obj)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
 def _body(files: dict, sym: dict | None, title: str) -> str:
+    # _js_json(title)[1:-1]: json.dumps a single string, then strip its own
+    # surrounding quotes, so what's substituted is a properly quote/backslash
+    # -escaped (and </script>-safe) inner string — the template supplies the
+    # surrounding "..." already. Without this, title (a repo name) could
+    # contain a `"` or `</script>` that breaks out of the intended
+    # string/script block.
     return (_TEMPLATE
-            .replace("__FILES__", json.dumps(files))
-            .replace("__SYM__", json.dumps(sym) if sym else "null")
-            .replace("__TITLE__", title))
+            .replace("__FILES__", _js_json(files))
+            .replace("__SYM__", _js_json(sym) if sym else "null")
+            .replace("__TITLE__", _js_json(title)[1:-1]))
 
 
 def _wrap(body: str, title: str) -> str:
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            f"<title>{title}</title></head><body>{body}</body></html>")
+            f"<title>{html.escape(title)}</title></head><body>{body}</body></html>")
 
 
 def render(data: dict, title: str = "Dependency Atlas") -> str:

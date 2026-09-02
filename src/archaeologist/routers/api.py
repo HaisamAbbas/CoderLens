@@ -13,19 +13,22 @@ Phase 2 of the multi-user migration. `/api/status` is the one exception
 """
 
 import json
+import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from archaeologist.agent.graph import investigate_stream
 from archaeologist.auth import CurrentUser, RequireRealUser
 from archaeologist.config import settings
+from archaeologist.rate_limit import limiter
 from archaeologist.indexing.opensearch_client import get_client
 from archaeologist.ingestion.repository import normalize_repo_url
 from archaeologist.models.db import session_scope
@@ -54,6 +57,7 @@ from archaeologist.services.conversations import (
 from archaeologist.viz.export import export_file_graph, export_symbol_graph
 
 router = APIRouter(prefix="/api", tags=["api"])
+_logger = logging.getLogger("archaeologist")
 
 
 def _active_order():
@@ -213,7 +217,8 @@ class AddRepoBody(BaseModel):
 
 
 @router.post("/repos")
-def add_repo(body: AddRepoBody, user: User = CurrentUser) -> dict:
+@limiter.limit("10/minute")
+def add_repo(request: Request, body: AddRepoBody, user: User = CurrentUser) -> dict:
     """Start a full ingest (clone → streams → symbols → indexes → graph) of a
     repo URL in the background, owned by the signed-in user. Returns the job;
     the UI polls its status.
@@ -268,7 +273,10 @@ class RefreshRepoBody(BaseModel):
 
 
 @router.post("/repos/refresh")
-def refresh_repo(body: RefreshRepoBody | None = None, user: User = CurrentUser) -> dict:
+@limiter.limit("10/minute")
+def refresh_repo(
+    request: Request, body: RefreshRepoBody | None = None, user: User = CurrentUser,
+) -> dict:
     """Re-ingest the active repo end-to-end (picks up new commits / files).
 
     Today refresh never contacts the remote unless the local clone is gone
@@ -499,13 +507,15 @@ def architecture(user: User = CurrentUser) -> dict:
 
 
 def _clone_path(repo: Repo) -> Path:
-    """Where this repo's clone lives on disk — the same owner__name layout
-    clone_or_open writes to, so history is read from the clone the ingest made
-    rather than a second copy."""
-    from archaeologist.ingestion.repository import repo_slug
-
-    owner, name = repo_slug(repo.url)
-    return Path(settings.repos_dir) / f"{owner}__{name}"
+    """Where this repo's clone lives on disk. Reads the path the ingest
+    itself recorded (Repo.cloned_path) rather than recomputing owner/name
+    from the URL — the clone directory is namespaced per user
+    (repos/<user_id>/<owner>__<name>, see ingestion.repository.clone_or_open),
+    so recomputing it here without the user id would silently point at the
+    wrong (or another user's) directory."""
+    if not repo.cloned_path:
+        raise HTTPException(404, "No local clone available for this repo.")
+    return Path(repo.cloned_path)
 
 
 @router.get("/architecture/refs")
@@ -562,7 +572,8 @@ def entrypoints(user: User = CurrentUser) -> dict:
 
 
 @router.get("/wiki")
-def wiki(refresh: bool = False, user: User = CurrentUser) -> dict:
+@limiter.limit("20/minute")
+def wiki(request: Request, refresh: bool = False, user: User = CurrentUser) -> dict:
     """Generation itself now makes several LLM calls (page-structure decision +
     one prose call per page — DeepWiki's actual shape), so caching matters even
     more than before: cached per (repo, head_sha), re-ingesting naturally
@@ -621,7 +632,7 @@ def callgraph(symbol_id: int, depth: int = Query(3, ge=1, le=5), user: User = Cu
         # in the database with no repo/user check at all.
         if sym is None or not _owns_repo(s, user, sym.repo_id):
             raise HTTPException(404, "Symbol not found")
-        return call_flow(s, symbol_id, depth=depth)
+        return call_flow(s, symbol_id, sym.repo_id, depth=depth)
 
 
 @router.get("/impact/{symbol_id}")
@@ -654,12 +665,18 @@ def export_snapshot_html(user: User = CurrentUser) -> HTMLResponse:
         r = _repo(s, user)
         snapshot = build_snapshot(s, r.id, r.name, user.id)
     html = render_snapshot_html(snapshot, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
-    headers = {"Content-Disposition": f'attachment; filename="{snapshot["repo"]}-snapshot.html"'}
+    # Repo.name is sanitized at ingest time (ingestion.repository.safe_repo_name)
+    # for anything ingested after that fix landed, but a header value built
+    # from it is cheap to harden defensively too — a stray `"` in an older
+    # row's name would otherwise break out of the quoted filename parameter.
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", snapshot["repo"])[:100] or "repo"
+    headers = {"Content-Disposition": f'attachment; filename="{safe_name}-snapshot.html"'}
     return HTMLResponse(content=html, headers=headers)
 
 
 @router.get("/search")
-def search(q: str = Query(...), streams: str | None = None, k: int = 10, user: User = CurrentUser) -> dict:
+def search(q: str = Query(..., max_length=2000), streams: str | None = None,
+          k: int = Query(10, ge=1, le=50), user: User = CurrentUser) -> dict:
     with session_scope() as s:
         repo_id = _repo(s, user).id  # 404s cleanly if this user has no active repo
     stream_list = streams.split(",") if streams else None
@@ -670,45 +687,55 @@ def search(q: str = Query(...), streams: str | None = None, k: int = 10, user: U
 
 
 class AskBody(BaseModel):
-    question: str
-    k: int = 8
-    streams: list[str] | None = None
+    question: str = Field(..., min_length=1, max_length=4000)
+    k: int = Field(8, ge=1, le=25)
+    streams: list[str] | None = Field(default=None, max_length=10)
 
 
 @router.post("/ask")
-def ask(body: AskBody, user: User = CurrentUser) -> dict:
+@limiter.limit("20/minute")
+def ask(request: Request, body: AskBody, user: User = CurrentUser) -> dict:
     with session_scope() as s:
         repo_id = _repo(s, user).id
     from archaeologist.rag.pipeline import answer_question
     try:
         res = answer_question(body.question, repo_id, user.id, k=body.k, streams=body.streams)
-    except Exception as exc:  # noqa: BLE001 - surface a structured error to the UI
-        raise HTTPException(500, f"The LLM call failed: {exc}") from exc
+    except Exception:  # noqa: BLE001 - logged, never returned (see M-10 in the audit)
+        # The underlying exception can carry the provider's request URL
+        # (e.g. a self-hosted Ollama/Alibaba endpoint) or other config
+        # detail — that must stay server-side, not go to an anonymous caller.
+        _logger.exception("ask failed for repo %s", repo_id)
+        raise HTTPException(500, "The LLM call failed. Check provider configuration.")
     return {"question": res.question, "answer": res.answer, "evidence": res.evidence}
 
 
 class HistoryTurn(BaseModel):
-    question: str
-    answer: str
+    question: str = Field(..., max_length=4000)
+    answer: str = Field(..., max_length=20000)
 
 
 class InvestigateBody(BaseModel):
-    question: str
-    max_iterations: int = 2
-    history: list[HistoryTurn] = []
+    question: str = Field(..., min_length=1, max_length=4000)
+    # Each iteration is a full LLM call; unbounded, this is a client-directed
+    # spend/DoS lever against the operator's provider key (every ask/investigate
+    # route is reachable with no login — see auth.get_current_user).
+    max_iterations: int = Field(2, ge=1, le=5)
+    history: list[HistoryTurn] = Field(default_factory=list, max_length=20)
     simple: bool = False
 
 
 @router.post("/investigate")
-def investigate(body: InvestigateBody, user: User = CurrentUser) -> dict:
+@limiter.limit("15/minute")
+def investigate(request: Request, body: InvestigateBody, user: User = CurrentUser) -> dict:
     with session_scope() as s:
         repo_id = _repo(s, user).id
     from archaeologist.agent.graph import investigate as run
     try:
         r = run(body.question, repo_id, user.id, max_iterations=body.max_iterations,
                 history=[h.model_dump() for h in body.history], simple=body.simple)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(500, f"The investigation failed: {exc}") from exc
+    except Exception:  # noqa: BLE001 - logged, never returned (see M-10 in the audit)
+        _logger.exception("investigate failed for repo %s", repo_id)
+        raise HTTPException(500, "The investigation failed. Check provider configuration.")
     result = {"question": r["question"], "answer": r["answer"],
               "evidence": r["evidence"], "trace": r["trace"]}
     if result["answer"]:
@@ -718,7 +745,8 @@ def investigate(body: InvestigateBody, user: User = CurrentUser) -> dict:
 
 
 @router.post("/investigate/stream")
-def investigate_stream_endpoint(body: InvestigateBody, user: User = CurrentUser):
+@limiter.limit("15/minute")
+def investigate_stream_endpoint(request: Request, body: InvestigateBody, user: User = CurrentUser):
     """Server-sent events: live trace steps, then the answer and evidence.
     The frontend consumes this with fetch + a ReadableStream. Saved to history
     once the stream completes with a real answer (errors aren't saved)."""
@@ -779,7 +807,7 @@ def conversation_delete(conv_id: int, user: User = CurrentUser) -> dict:
 
 
 class PublishConfluenceBody(BaseModel):
-    section_keys: list[str]
+    section_keys: list[str] = Field(..., max_length=100)
 
 
 @router.post("/confluence/publish")
@@ -816,7 +844,8 @@ class ScanWeaknessesBody(BaseModel):
 
 
 @router.post("/weaknesses/scan")
-def scan_weaknesses(body: ScanWeaknessesBody, user: User = CurrentUser) -> dict:
+@limiter.limit("5/minute")
+def scan_weaknesses(request: Request, body: ScanWeaknessesBody, user: User = CurrentUser) -> dict:
     """Scan the active repo for weaknesses (LLM, one call per file, capped by
     default) as a tracked background job. Findings land in the weaknesses table
     for review — nothing external happens until tickets are explicitly approved."""
@@ -937,7 +966,7 @@ def dismiss_weakness(weakness_id: int, user: User = CurrentUser) -> dict:
 
 
 class CreateJiraTicketsBody(BaseModel):
-    finding_ids: list[int]
+    finding_ids: list[int] = Field(..., max_length=200)
 
 
 @router.post("/jira/tickets")

@@ -43,6 +43,14 @@ dependencies = [
     "networkx>=3.6.1",
     # Confluence publish (Phase 8)
     "markdown>=3.7",
+    # Confluence publish: markdown.markdown() passes raw HTML through
+    # unchanged (safe_mode was removed upstream in markdown 3.0) — bleach
+    # strips anything outside an explicit allow-list before LLM/repo-derived
+    # prose reaches Confluence storage format.
+    "bleach>=6.1",
+    # Rate limiting for the LLM-spending / ingest-triggering routes — see
+    # rate_limit.py. Every one of those routes is reachable with no login.
+    "slowapi>=0.1.10",
 ]
 
 [project.optional-dependencies]

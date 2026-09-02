@@ -34,7 +34,10 @@ async function renderForExport(chart: string): Promise<string> {
   mermaid.initialize({
     startOnLoad: false,
     theme: dark ? "dark" : "default",
-    securityLevel: "loose",
+    // "strict" — labels are repo-derived (attacker-controlled) text; see
+    // the matching note in components/Mermaid.tsx. htmlLabels is already
+    // false here, so this tightens sanitization with no behavior change.
+    securityLevel: "strict",
     flowchart: { curve: "basis", htmlLabels: false, padding: 14, nodeSpacing: 40, rankSpacing: 55 },
     fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif",
   });

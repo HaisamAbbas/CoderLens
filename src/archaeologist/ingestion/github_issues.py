@@ -8,7 +8,7 @@ from datetime import datetime
 
 import httpx
 
-from archaeologist.ingestion.repository import repo_slug
+from archaeologist.ingestion.repository import _validate_slug, repo_slug
 
 API = "https://api.github.com"
 
@@ -24,6 +24,7 @@ def fetch_issues(
 ) -> list[dict]:
     """Return issue/PR rows (without repo_id), newest first."""
     owner, name = repo_slug(repo_url)
+    _validate_slug(owner, name)  # a malformed slug must not reshape the API path below
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"

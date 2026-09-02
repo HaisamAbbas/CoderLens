@@ -9,12 +9,15 @@ can't stream partial output *from inside* a node. Keeping synthesis outside the
 graph is what makes token-by-token streaming to the client possible at all.
 """
 
+import logging
 from functools import lru_cache
 
 from langgraph.graph import END, StateGraph
 
 from archaeologist.agent import nodes
 from archaeologist.agent.state import InvestigationState
+
+_logger = logging.getLogger("archaeologist")
 
 
 @lru_cache
@@ -48,7 +51,11 @@ def _initial_state(
         "streams": None,
         "evidence": [],
         "iterations": 0,
-        "max_iterations": max_iterations,
+        # Clamped here too, not just at the API layer (routers/api.py's
+        # Field(le=5)) — this is the one place every caller (HTTP, CLI,
+        # notebook) funnels through, so the graph itself can never run an
+        # unbounded number of LLM calls no matter how it's invoked.
+        "max_iterations": max(1, min(max_iterations, 5)),
         "sufficient": False,
         "missing": "",
         "answer": "",
@@ -101,5 +108,6 @@ def investigate_stream(
                 yield {"type": "answer_delta", "text": delta}
             yield {"type": "answer", "answer": answer}
             yield {"type": "evidence", "evidence": final.get("evidence", [])}
-    except Exception as exc:  # noqa: BLE001 - stream the failure to the client
-        yield {"type": "error", "message": str(exc)}
+    except Exception:  # noqa: BLE001 - logged; the client gets a generic message (see M-10)
+        _logger.exception("investigate_stream failed for repo %s", repo_id)
+        yield {"type": "error", "message": "The investigation failed. Check provider configuration."}

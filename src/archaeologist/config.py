@@ -8,7 +8,7 @@ Import the singleton `settings` anywhere:
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # from here (see the SPA fallback below) — only needed in dev, where the
     # Vite dev server runs on a different port than this API.
     frontend_base_url: str = Field(default="")
+    # Comma-separated hostnames this app is served as (e.g. "coderlens.example.com").
+    # Blank skips TrustedHostMiddleware entirely — only enabled when set, since a
+    # wrong value would lock the operator out rather than merely leave a gap open.
+    allowed_hosts: str = Field(default="")
 
     # --- Auth (Phase 1 of the multi-user migration) ---
     # A new GitHub OAuth App (github.com/settings/developers → OAuth Apps —
@@ -128,6 +132,13 @@ class Settings(BaseSettings):
     postgres_host: str = Field(default="localhost")
     postgres_port: int = Field(default=5433)
     postgres_user: str = Field(default="archaeologist")
+    # Matches compose.yml's own default so `docker compose up -d` + `uv run`
+    # works with zero config — but that value is public (it's in this file
+    # AND compose.yml), so it can only ever be safe on a machine where
+    # nothing else can reach the port (the local Docker instance is
+    # loopback-bound). _require_secrets below refuses to start with this
+    # literal value outside development so it can't drift into a real
+    # deployment by inertia.
     postgres_password: str = Field(default="archaeologist")
     postgres_db: str = Field(default="archaeologist")
     # Hosted Postgres (Neon, Supabase, ...) requires TLS; the local Docker
@@ -146,6 +157,10 @@ class Settings(BaseSettings):
     # --- Redis ---
     redis_host: str = Field(default="localhost")
     redis_port: int = Field(default=6379)
+    # Blank/off by default to match the local Docker instance (no auth
+    # configured there); a shared/hosted deployment must set this and pass
+    # the matching --requirepass to the redis service (see compose.yml).
+    redis_password: str = Field(default="")
 
     # --- Observability (Phase 7) — Langfuse is optional; local telemetry always on ---
     langfuse_public_key: str = Field(default="")
@@ -167,8 +182,12 @@ class Settings(BaseSettings):
     # space and Jira project, encrypted at rest, instead of one shared
     # operator-configured account. Only operator-level, non-secret rendering
     # config stays global here.
-    # mermaid.ink PNG rendering vs. always-fallback-to-code-macro
-    confluence_render_diagrams: bool = Field(default=True)
+    # mermaid.ink PNG rendering vs. always-fallback-to-code-macro. Off by
+    # default: enabling this sends a private repo's full architecture
+    # (submodule names, class hierarchy, call flow, directory layout) to an
+    # unaffiliated third party — an operator opts in deliberately, not by
+    # inheriting a permissive default. See render_diagram_image's docstring.
+    confluence_render_diagrams: bool = Field(default=False)
     confluence_mermaid_ink_url: str = Field(default="https://mermaid.ink")
 
     # Encrypts UserIntegration's API tokens at rest (Fernet/AES). Generate:
@@ -205,7 +224,44 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
-        return f"redis://{self.redis_host}:{self.redis_port}/0"
+        auth = f":{self.redis_password}@" if self.redis_password else ""
+        return f"redis://{auth}{self.redis_host}:{self.redis_port}/0"
+
+    @model_validator(mode="after")
+    def _require_secrets(self) -> "Settings":
+        """Fail loudly at import rather than silently booting insecure.
+
+        An empty session_secret signs every session cookie with a known,
+        public key (b""), which is a full authentication bypass — anyone can
+        forge {"user_id": N} for any N. An empty credentials_encryption_key
+        means Fernet can't be constructed at all, so every Confluence/Jira/
+        GitHub credential save would crash deep inside a background job
+        instead of at startup. The default Postgres password is the literal
+        string printed in this file and in compose.yml — public, guessable
+        in one attempt. All three are development-only escape hatches:
+        outside development, refuse to start rather than leave any of them
+        open in whatever calls itself "production" here."""
+        if self.app_env == "development":
+            return self
+        if len(self.session_secret) < 32:
+            raise ValueError(
+                "SESSION_SECRET must be set to a random string of at least 32 "
+                "characters outside development. Generate one with: "
+                'python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            )
+        if not self.credentials_encryption_key:
+            raise ValueError(
+                "CREDENTIALS_ENCRYPTION_KEY must be set outside development. "
+                "Generate one with: python -c \"from cryptography.fernet import "
+                'Fernet; print(Fernet.generate_key().decode())"'
+            )
+        if self.postgres_password in ("", "archaeologist"):
+            raise ValueError(
+                "POSTGRES_PASSWORD must be set to a real password outside "
+                "development — the default matches the value printed in "
+                ".env.example and compose.yml and is not a secret."
+            )
+        return self
 
 
 @lru_cache

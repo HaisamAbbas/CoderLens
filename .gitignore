@@ -27,3 +27,9 @@ frontend/dist/
 
 # Claude Code local settings (personal, not shared)
 .claude/settings.local.json
+
+# Agent session transcripts / generated artifacts — may contain pasted secrets
+session-*.md
+wiki*.json
+.claude/
+!.claude/settings.json

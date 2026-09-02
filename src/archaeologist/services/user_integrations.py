@@ -10,7 +10,24 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from archaeologist.models.entities import UserIntegration
+from archaeologist.net_guard import assert_public_https_url
 from archaeologist.security import decrypt, encrypt
+
+
+def _safe_base_url(raw: str) -> str:
+    """Reject anything that isn't a real, public https:// URL before it's
+    stored. Without this, a user could point their Confluence/Jira base URL
+    at the cloud metadata endpoint, at localhost (this app's own Postgres/
+    OpenSearch), or at an internal service — every publish/ticket job then
+    makes an authenticated, credentialed server-side request to whatever
+    was saved, and the resulting error text (surfaced through the job-status
+    endpoints) turns that into a readable probe of internal network/DNS.
+    http:// is also rejected outright: it would send the user's own Basic-
+    auth Confluence/Jira token in cleartext to whatever host is configured."""
+    try:
+        return assert_public_https_url(raw)
+    except ValueError as exc:
+        raise ValueError(f"Base URL must be a public https:// URL ({exc})") from exc
 
 
 def get(session: Session, user_id: int) -> UserIntegration | None:
@@ -69,7 +86,7 @@ def upsert_confluence(
     session: Session, user_id: int, base_url: str, email: str, api_token: str, space_key: str,
 ) -> UserIntegration:
     integ = _get_or_create(session, user_id)
-    integ.confluence_base_url = base_url.strip()
+    integ.confluence_base_url = _safe_base_url(base_url)
     integ.confluence_email = email.strip()
     integ.confluence_space_key = space_key.strip()
     if api_token:  # blank = keep the existing encrypted token
@@ -82,7 +99,7 @@ def upsert_jira(
     project_key: str, issue_type: str,
 ) -> UserIntegration:
     integ = _get_or_create(session, user_id)
-    integ.jira_base_url = base_url.strip()
+    integ.jira_base_url = _safe_base_url(base_url)
     integ.jira_email = email.strip()
     integ.jira_project_key = project_key.strip()
     integ.jira_issue_type = issue_type.strip() or "Task"

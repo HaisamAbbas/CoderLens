@@ -12,8 +12,10 @@ directly — one dependency, one renderer, no hand-rolled conversion.
 
 import base64
 import json
+from urllib.parse import urlparse
 from xml.sax.saxutils import escape
 
+import bleach
 import httpx
 import markdown
 
@@ -21,25 +23,56 @@ from archaeologist.config import settings
 from archaeologist.services import confluence_client
 from archaeologist.services.confluence_client import ConfluencePage
 
+# The "md"/"p" block text is LLM-authored prose, and every table/list cell
+# below runs through _inline_md — both ultimately built from repo content an
+# attacker fully controls (README text, file/symbol names, and anything the
+# LLM can be prompt-injected into emitting). markdown.markdown() passes raw
+# HTML straight through (safe_mode was removed upstream in markdown 3.0), and
+# Confluence's storage format executes <ac:structured-macro>/<ri:...> as real
+# markup — so unsanitized output here is stored XSS in the victim's own
+# Confluence space. Allow only plain prose formatting; nothing that can carry
+# a URL, an event handler, or a Confluence macro.
+_ALLOWED_TAGS = ["p", "ul", "ol", "li", "strong", "em", "code", "pre",
+                 "h3", "h4", "table", "thead", "tbody", "tr", "th", "td", "br"]
+
+
+def _safe_md(text: str, *, inline: bool = False) -> str:
+    html = markdown.markdown(text, extensions=["tables"])
+    if inline and html.startswith("<p>") and html.endswith("</p>"):
+        html = html[3:-4]
+    return bleach.clean(html, tags=_ALLOWED_TAGS, attributes={}, strip=True)
+
 # ---------- diagram rendering ----------
 
 def render_diagram_image(mermaid_src: str) -> bytes | None:
     """Render a Mermaid flowchart to PNG via mermaid.ink (a public rendering
     service — chosen over running Playwright/Chromium in-process, which would
-    blow this app's 512MB free-tier budget). Sends diagram SOURCE (symbol /
-    module names, not secrets) to a third party; that tradeoff is why it's a
-    settings toggle rather than hardwired on. Any failure returns None and the
-    caller falls back to a raw-Mermaid code macro."""
+    blow this app's 512MB free-tier budget).
+
+    This sends the FULL diagram source — every submodule name, every class in
+    an inheritance hierarchy, every symbol in a call flow, the directory
+    layout — to a third party with no data-processing agreement, no retention
+    guarantee, and no log control. For a private repository that is
+    confidential structure leaving the trust boundary, not "symbol names, not
+    secrets" as this used to claim. Off by default; an operator opts in
+    knowingly, and the host is pinned so a misconfigured/compromised
+    CONFLUENCE_MERMAID_INK_URL can't silently redirect this to an arbitrary
+    collector. Any failure returns None and the caller falls back to a
+    raw-Mermaid code macro, which renders natively in Confluence with no
+    third-party call at all."""
     if not settings.confluence_render_diagrams:
+        return None
+    base_url = settings.confluence_mermaid_ink_url.rstrip("/")
+    if urlparse(base_url).hostname != "mermaid.ink":
         return None
     try:
         # mermaid.ink takes a base64url-encoded JSON state document.
         state = json.dumps({"code": mermaid_src, "mermaid": {"theme": "default"}})
         encoded = base64.urlsafe_b64encode(state.encode()).decode()
         resp = httpx.get(
-            f"{settings.confluence_mermaid_ink_url.rstrip('/')}/img/{encoded}",
+            f"{base_url}/img/{encoded}",
             timeout=30.0,
-            follow_redirects=True,
+            follow_redirects=False,  # never let a redirect retarget this to another host
         )
         if resp.status_code != 200 or not resp.content:
             return None
@@ -55,10 +88,7 @@ def _cdata(text: str) -> str:
 
 def _inline_md(text: str) -> str:
     """Inline markdown (list/table cells) — drop markdown's block-level <p>."""
-    html = markdown.markdown(text, extensions=["tables"]).strip()
-    if html.startswith("<p>") and html.endswith("</p>"):
-        return html[3:-4]
-    return html
+    return _safe_md(text, inline=True)
 
 
 def _code_macro(lang: str, code: str) -> str:
@@ -76,7 +106,7 @@ def _code_macro(lang: str, code: str) -> str:
 def block_to_html(block: dict, image_filenames: dict[int, str]) -> str:
     kind = block.get("kind")
     if kind in ("md", "p"):
-        return markdown.markdown(block["text"], extensions=["tables"])
+        return _safe_md(block["text"])
     if kind == "h2":
         return f"<h2>{escape(block['text'])}</h2>"
     if kind == "list":

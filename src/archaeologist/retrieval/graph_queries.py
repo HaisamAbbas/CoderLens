@@ -16,12 +16,18 @@ def find_symbol(session: Session, qualified_name: str, repo_id: int) -> Symbol |
     )
 
 
-def who_depends_on(session: Session, symbol_id: int) -> list[tuple[str, Symbol]]:
-    """Symbols that call or inherit the given symbol — 'what breaks if I remove X'."""
+def who_depends_on(session: Session, symbol_id: int, repo_id: int) -> list[tuple[str, Symbol]]:
+    """Symbols that call or inherit the given symbol — 'what breaks if I remove X'.
+
+    `repo_id` scopes both the edge and the joined symbol — every caller
+    today already resolves `symbol_id` through a repo/ownership check of its
+    own, but this closes the query itself rather than depending solely on
+    caller discipline (see the identical note on most_coupled_files above)."""
     rows = session.execute(
         select(SymbolEdge.edge_type, Symbol)
         .join(Symbol, Symbol.id == SymbolEdge.src_symbol_id)
-        .where(SymbolEdge.dst_symbol_id == symbol_id)
+        .where(SymbolEdge.dst_symbol_id == symbol_id,
+               SymbolEdge.repo_id == repo_id, Symbol.repo_id == repo_id)
         .order_by(SymbolEdge.edge_type)
     )
     return [(edge_type, sym) for edge_type, sym in rows]
@@ -39,7 +45,11 @@ def most_coupled_files(
         .select_from(SymbolEdge)
         .join(src, src.id == SymbolEdge.src_symbol_id)
         .join(dst, dst.id == SymbolEdge.dst_symbol_id)
-        .where(src.file_path != dst.file_path)
+        .where(src.file_path != dst.file_path,
+               # `repo_id` is a required parameter but previously never
+               # applied — this aggregate spanned symbol_edges for every
+               # repo of every user in the shared table.
+               SymbolEdge.repo_id == repo_id, src.repo_id == repo_id, dst.repo_id == repo_id)
     )
     if exclude_tests:
         query = query.where(~src.file_path.like("tests/%"), ~dst.file_path.like("tests/%"))
@@ -47,12 +57,14 @@ def most_coupled_files(
     return [(a, b, n) for a, b, n in session.execute(query)]
 
 
-def call_flow(session: Session, start_symbol_id: int, depth: int = 3,
+def call_flow(session: Session, start_symbol_id: int, repo_id: int, depth: int = 3,
               fanout: int = 8, max_nodes: int = 48) -> dict:
     """A layered call-flow graph downstream of a symbol (nodes + edges), for the
-    flowchart view. Breadth is capped per node and overall to stay readable."""
+    flowchart view. Breadth is capped per node and overall to stay readable.
+
+    `repo_id` scopes every edge/symbol traversed — see who_depends_on's note."""
     start = session.get(Symbol, start_symbol_id)
-    if start is None:
+    if start is None or start.repo_id != repo_id:
         return {"root": start_symbol_id, "nodes": [], "edges": []}
 
     def node(sym: Symbol, d: int) -> dict:
@@ -72,7 +84,8 @@ def call_flow(session: Session, start_symbol_id: int, depth: int = 3,
             .join(Symbol, Symbol.id == SymbolEdge.dst_symbol_id)
             .where(SymbolEdge.src_symbol_id.in_(frontier),
                    SymbolEdge.edge_type == "call",
-                   SymbolEdge.dst_symbol_id.is_not(None))
+                   SymbolEdge.dst_symbol_id.is_not(None),
+                   SymbolEdge.repo_id == repo_id, Symbol.repo_id == repo_id)
             # Prefer confidently-resolved calls when the per-node fanout cap kicks in,
             # so a real dependency doesn't get crowded out by an ambiguous name match.
             .order_by(SymbolEdge.confidence.desc())
@@ -98,11 +111,14 @@ def call_flow(session: Session, start_symbol_id: int, depth: int = 3,
     return {"root": start.id, "nodes": list(nodes.values()), "edges": edges}
 
 
-def call_path(session: Session, start_symbol_id: int, max_depth: int = 4) -> list[tuple[int, Symbol]]:
+def call_path(session: Session, start_symbol_id: int, repo_id: int, max_depth: int = 4) -> list[tuple[int, Symbol]]:
     """BFS over outgoing `call` edges from a symbol — an execution-path sketch.
-    Returns (depth, symbol) in discovery order."""
+    Returns (depth, symbol) in discovery order. `repo_id` scopes the walk —
+    see who_depends_on's note."""
     visited = {start_symbol_id}
     start = session.get(Symbol, start_symbol_id)
+    if start is not None and start.repo_id != repo_id:
+        start = None
     result: list[tuple[int, Symbol]] = [(0, start)] if start else []
     frontier = [start_symbol_id]
 
@@ -116,6 +132,7 @@ def call_path(session: Session, start_symbol_id: int, max_depth: int = 4) -> lis
                 SymbolEdge.src_symbol_id.in_(frontier),
                 SymbolEdge.edge_type == "call",
                 SymbolEdge.dst_symbol_id.is_not(None),
+                SymbolEdge.repo_id == repo_id, Symbol.repo_id == repo_id,
             )
         ).all()
         next_frontier: list[int] = []

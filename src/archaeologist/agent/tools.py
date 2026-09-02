@@ -35,8 +35,8 @@ def graph_expand(qualified_names: list[str], repo_id: int) -> list[dict]:
             sym = find_symbol(session, qn, repo_id)
             if sym is None:
                 continue
-            dependents = who_depends_on(session, sym.id)
-            outgoing = call_path(session, sym.id, max_depth=2)
+            dependents = who_depends_on(session, sym.id, repo_id)
+            outgoing = call_path(session, sym.id, repo_id, max_depth=2)
 
             breaks = ", ".join(f"{et}:{s.qualified_name}" for et, s in dependents[:15]) or "(none internal)"
             calls = ", ".join(s.qualified_name for d, s in outgoing[1:16]) or "(none resolved)"

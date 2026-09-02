@@ -18,6 +18,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from archaeologist.net_guard import assert_public_https_url
+
 
 @dataclass
 class ConfluencePage:
@@ -28,7 +30,12 @@ class ConfluencePage:
 
 
 def open_client(base_url: str, email: str, api_token: str) -> httpx.Client:
-    return httpx.Client(auth=(email, api_token), base_url=base_url, timeout=30.0)
+    # base_url is validated at save time (services/user_integrations.py) too,
+    # but DNS can be re-pointed after saving — re-check right before the
+    # credentialed client is actually used.
+    assert_public_https_url(base_url)
+    return httpx.Client(auth=(email, api_token), base_url=base_url, timeout=30.0,
+                        follow_redirects=False)
 
 
 def _page_url(client: httpx.Client, body: dict) -> str:

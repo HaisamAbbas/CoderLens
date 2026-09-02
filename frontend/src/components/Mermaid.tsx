@@ -35,8 +35,14 @@ export default function Mermaid({
     mermaid.initialize({
       startOnLoad: false,
       theme: isDarkNow() ? "dark" : "default",
-      securityLevel: "loose",
-      flowchart: { curve: "basis", htmlLabels: true, padding: 14, nodeSpacing: 40, rankSpacing: 55 },
+      // "strict" (Mermaid's DOMPurify-sanitized mode) — node/edge labels are
+      // built server-side from repo-derived names (file/dir/symbol names),
+      // which are attacker-controlled: a public repo can name a directory
+      // anything, including markup. "loose" skips that sanitization
+      // entirely and htmlLabels renders label text as real HTML, so the
+      // combination was a stored-XSS path on the app's own origin.
+      securityLevel: "strict",
+      flowchart: { curve: "basis", htmlLabels: false, padding: 14, nodeSpacing: 40, rankSpacing: 55 },
       fontFamily: "var(--font-sans, system-ui), sans-serif",
     });
     mermaid

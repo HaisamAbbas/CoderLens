@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { safeHref } from "../lib/safeHref";
 import type { ConfluenceJob, WikiSection } from "../lib/types";
 
 type Phase = "preview" | "publishing" | "done";
@@ -116,7 +117,9 @@ export default function ConfluencePublishDialog(
             {job?.parent_url && (
               <p className="cfd-note">
                 Parent page:{" "}
-                <a href={job.parent_url} target="_blank" rel="noreferrer">{job.parent_url}</a>
+                {safeHref(job.parent_url)
+                  ? <a href={safeHref(job.parent_url)} target="_blank" rel="noreferrer">{job.parent_url}</a>
+                  : job.parent_url}
               </p>
             )}
             {publishedKeys.map((key) => {
@@ -130,7 +133,7 @@ export default function ConfluencePublishDialog(
                       <span className="cfd-ok">✓</span>
                       <span>
                         {r.title}
-                        {r.url && <> · <a href={r.url} target="_blank" rel="noreferrer">View in Confluence</a></>}
+                        {safeHref(r.url) && <> · <a href={safeHref(r.url)} target="_blank" rel="noreferrer">View in Confluence</a></>}
                         {r.error && <div className="cfd-error-text">{r.error}</div>}
                       </span>
                     </>

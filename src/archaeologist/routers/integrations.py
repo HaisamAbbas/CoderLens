@@ -5,7 +5,7 @@ every time they ingest a new private repo). Never returns a saved API token
 back to the client; a blank token on a PUT means "keep the existing one."
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from archaeologist.auth import RequireRealUser
@@ -52,10 +52,13 @@ class ConfluenceIntegrationBody(BaseModel):
 
 @router.put("/confluence")
 def put_confluence(body: ConfluenceIntegrationBody, user: User = RequireRealUser) -> dict:
-    with session_scope() as s:
-        user_integrations.upsert_confluence(
-            s, user.id, body.base_url, body.email, body.api_token, body.space_key,
-        )
+    try:
+        with session_scope() as s:
+            user_integrations.upsert_confluence(
+                s, user.id, body.base_url, body.email, body.api_token, body.space_key,
+            )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"ok": True}
 
 
@@ -76,11 +79,14 @@ class JiraIntegrationBody(BaseModel):
 
 @router.put("/jira")
 def put_jira(body: JiraIntegrationBody, user: User = RequireRealUser) -> dict:
-    with session_scope() as s:
-        user_integrations.upsert_jira(
-            s, user.id, body.base_url, body.email, body.api_token,
-            body.project_key, body.issue_type,
-        )
+    try:
+        with session_scope() as s:
+            user_integrations.upsert_jira(
+                s, user.id, body.base_url, body.email, body.api_token,
+                body.project_key, body.issue_type,
+            )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"ok": True}
 
 

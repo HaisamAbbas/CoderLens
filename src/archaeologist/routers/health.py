@@ -4,13 +4,22 @@
 - GET /health/deps  — checks Postgres, OpenSearch, and Redis connectivity
 
 Used in Phase 0 to confirm the Docker stack is reachable from the app.
+Both routes are intentionally unauthenticated (matched by /health/deps not
+requiring RequireRealUser either) so they work as a plain uptime probe —
+/health/deps's per-service detail is logged server-side rather than
+returned to the caller, so it stays useful to an operator's own monitoring
+without handing an anonymous caller connection strings, internal
+hostnames, or credentials embedded in a raw driver exception.
 """
+
+import logging
 
 from fastapi import APIRouter
 
 from archaeologist.config import settings
 
 router = APIRouter(prefix="/health", tags=["health"])
+_logger = logging.getLogger("archaeologist")
 
 
 @router.get("")
@@ -33,8 +42,9 @@ def _check_postgres() -> dict:
         ) as conn:
             conn.execute("SELECT 1")
         return {"status": "ok"}
-    except Exception as exc:  # noqa: BLE001 - surface any connection failure
-        return {"status": "error", "detail": str(exc)}
+    except Exception:  # noqa: BLE001 - logged below, never returned to the caller
+        _logger.warning("health/deps: postgres check failed", exc_info=True)
+        return {"status": "error"}
 
 
 def _check_opensearch() -> dict:
@@ -46,8 +56,9 @@ def _check_opensearch() -> dict:
         client = get_client()
         resp = client.cluster.health(timeout=3)
         return {"status": "ok", "cluster": resp.get("status")}
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "detail": str(exc)}
+    except Exception:  # noqa: BLE001
+        _logger.warning("health/deps: opensearch check failed", exc_info=True)
+        return {"status": "error"}
 
 
 def _check_redis() -> dict:
@@ -59,8 +70,9 @@ def _check_redis() -> dict:
         )
         client.ping()
         return {"status": "ok"}
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "detail": str(exc)}
+    except Exception:  # noqa: BLE001
+        _logger.warning("health/deps: redis check failed", exc_info=True)
+        return {"status": "error"}
 
 
 @router.get("/deps")

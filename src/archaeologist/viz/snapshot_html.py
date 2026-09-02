@@ -3,6 +3,7 @@ file — inline CSS/JS, the data embedded as a JSON blob, no external requests.
 Whoever opens it needs no backend, no Docker, no LLM key: just a browser.
 """
 
+import html
 import json
 
 _TEMPLATE = r"""<!doctype html>
@@ -256,8 +257,20 @@ function initGraph() {
 
 
 def render_snapshot_html(snapshot: dict, generated_at: str) -> str:
-    title = f"{snapshot['repo']} — shared snapshot"
-    data_json = json.dumps(snapshot).replace("</script>", "<\\/script>")
+    # snapshot['repo'] is a repo display name derived from an
+    # attacker-suppliable clone URL (see ingestion.repository.safe_repo_name)
+    # — every OTHER renderer in this template escapes its repo-derived text
+    # (see esc() usage throughout); __TITLE__ was the one spot that didn't.
+    title = html.escape(f"{snapshot['repo']} — shared snapshot")
+    # `</script>` replacement alone is insufficient: HTML end-tag matching is
+    # case-insensitive, so `</Script>`/`</SCRIPT>` in any ingested string
+    # (a docstring, commit message, file path — anything that ends up in
+    # `snapshot`) would still terminate this block early, and json.dumps()
+    # doesn't escape < or > at all. Escaping the delimiter characters
+    # themselves is safe for JSON.parse and immune to case tricks.
+    data_json = (json.dumps(snapshot)
+                .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+                .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
     return (_TEMPLATE
             .replace("__TITLE__", title)
             .replace("__GENERATED_AT__", generated_at)

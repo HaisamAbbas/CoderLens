@@ -78,7 +78,12 @@ def _full_ingest(session, repo_url: str, user_id: int, max_commits: int | None,
                  stats: IngestStats, token: str = "") -> int:
     print(f"[1/5] Cloning / opening {repo_url} ...")
     repos_dir = Path(settings.repos_dir).resolve()
-    git_repo, dest = repository.clone_or_open(repo_url, repos_dir,
+    # Namespaced per user (repos_dir/<user_id>/<owner>__<name>) — a single
+    # shared owner__name directory used to mean a private repo one user
+    # cloned with their own PAT was silently reused (no auth, no ownership
+    # check) for ANY other user, including an anonymous guest, who
+    # requested the same URL. See repository.clone_or_open's docstring.
+    git_repo, dest = repository.clone_or_open(repo_url, repos_dir / str(user_id),
                                               _effective_clone_token(token))
     branch, head_sha = repository.head_info(git_repo)
     print(f"      -> {dest}  (branch={branch}, head={head_sha[:8] if head_sha else '?'})")
@@ -90,7 +95,7 @@ def _full_ingest(session, repo_url: str, user_id: int, max_commits: int | None,
     if repo is None:
         repo = Repo(url=repo_url, user_id=user_id)
         session.add(repo)
-    repo.name = repository.repo_slug(repo_url)[1]
+    repo.name = repository.safe_repo_name(repo_url)
     repo.default_branch = branch
     repo.head_sha = head_sha
     repo.cloned_path = str(dest)

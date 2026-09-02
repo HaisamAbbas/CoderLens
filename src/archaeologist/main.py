@@ -25,11 +25,16 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from archaeologist import __version__
 from archaeologist.config import settings
 from archaeologist.models.db import init_db
+from archaeologist.rate_limit import limiter
 from archaeologist.routers import api, auth, codemap, health, integrations
 
 
@@ -90,34 +95,67 @@ async def lifespan(app: FastAPI):
     yield
 
 
+_is_dev = settings.app_env == "development"
+
 app = FastAPI(
     title="CoderLens",
     description="Investigates a codebase and answers, with evidence, why it works the way it does.",
     version=__version__,
     lifespan=lifespan,
+    # The interactive docs/schema publish every route, parameter and schema
+    # to anyone who can reach the port, with a click-to-execute console
+    # against them — reconnaissance-as-a-service outside development.
+    docs_url="/docs" if _is_dev else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if _is_dev else None,
 )
+
+if settings.allowed_hosts:
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[h.strip() for h in settings.allowed_hosts.split(",") if h.strip()],
+    )
 
 # Session cookie for auth (Phase 1 of the multi-user migration) — itsdangerous-
 # signed, holds only {"user_id": int}, no server-side session store. Added
 # before CORS so CORS stays the outermost middleware (its headers must reach
 # even error responses raised inside session-dependent routes).
-app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, same_site="lax")
+# https_only=False in dev only, since the Vite dev server talks plain HTTP;
+# outside dev the cookie must never ride an unencrypted connection.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret,
+    same_site="lax",
+    https_only=not _is_dev,
+    max_age=60 * 60 * 24,  # 24h — matches the guest-data TTL ballpark, forces re-login periodically
+)
 
 # Dev: allow the Vite dev server to call the API cross-origin. In prod the
 # built frontend is served from this same app (see the SPA fallback below),
 # so no extra origin is needed there — CORS_ORIGINS only matters if the
-# frontend is ever deployed as a separate static site instead.
+# frontend is ever deployed as a separate static site instead. The Vite
+# dev-server origins are only ever added in development: allowing them
+# unconditionally would let anything running on a visitor's own machine at
+# that port make credentialed cross-origin calls against a real deployment.
 # allow_credentials=True lets the session cookie ride along on cross-origin
 # dev requests — safe here since allow_origins is always an explicit list,
 # never "*" (the two can't be combined).
 _extra_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+_dev_origins = ["http://localhost:5173", "http://127.0.0.1:5173"] if _is_dev else []
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", *_extra_origins],
+    allow_origins=[*_dev_origins, *_extra_origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting for the LLM-spending / ingest-triggering routes — see
+# rate_limit.py's docstring for why this is IP-keyed and why it matters that
+# every one of those routes is reachable with no login at all.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(health.router)
 app.include_router(auth.router)
@@ -126,6 +164,26 @@ app.include_router(codemap.router)
 app.include_router(integrations.router)
 
 _logger = logging.getLogger("archaeologist")
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Baseline hardening headers. No CSP nonce/hash machinery here — the
+    served frontend is a single hashed static bundle (frontend/dist) with no
+    inline <script>, so 'self' covers it; the dev Vite server is untouched
+    since it isn't served through this app."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if not _is_dev:
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https://avatars.githubusercontent.com; "
+            "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+        )
+    return response
 
 
 @app.exception_handler(Exception)

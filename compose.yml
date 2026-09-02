@@ -1,5 +1,14 @@
 # Phase 0 infrastructure: Postgres (metadata + symbol graph),
-# OpenSearch (BM25 + vectors), Redis (cache). Dev config only — security relaxed.
+# OpenSearch (BM25 + vectors), Redis (cache).
+#
+# LOCAL DEV ONLY — DO NOT deploy this file as-is. Default credentials,
+# OpenSearch's security plugin disabled, and no Redis auth are all
+# acceptable on a laptop where nothing but this app can reach these ports,
+# and not otherwise. Every port below is bound to 127.0.0.1 specifically so
+# a service running here is never reachable from another machine even if
+# this file IS run on a shared host — but a real deployment needs its own
+# hardened config (real secrets, TLS, OpenSearch security enabled), not
+# this one with the bindings loosened back up.
 services:
   postgres:
     image: postgres:16
@@ -10,7 +19,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-archaeologist}
     ports:
       # Host 5433 by default to avoid clashing with a native Postgres on 5432.
-      - "${POSTGRES_PORT:-5433}:5432"
+      # Loopback-only — see the file-level comment above.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -35,8 +45,8 @@ services:
         soft: 65536
         hard: 65536
     ports:
-      - "${OPENSEARCH_PORT:-9200}:9200"
-      - "9600:9600"
+      - "127.0.0.1:${OPENSEARCH_PORT:-9200}:9200"
+      - "127.0.0.1:9600:9600"
     volumes:
       - osdata:/usr/share/opensearch/data
     healthcheck:
@@ -48,8 +58,12 @@ services:
   redis:
     image: redis:7
     container_name: arch_redis
+    # No auth configured (dev-only, loopback-bound — see the file-level
+    # comment above); set REDIS_PASSWORD + a matching `command:
+    # ["redis-server", "--requirepass", ...]` before this ever runs
+    # anywhere reachable beyond localhost.
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -62,10 +76,10 @@ services:
   # hosted key is set (llm_provider=auto) — users never need their own key.
   # First boot pulls the model (~5 GB); subsequent boots are instant.
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.5.7
     container_name: arch_ollama
     ports:
-      - "${OLLAMA_PORT:-11434}:11434"
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
     volumes:
       - ollamadata:/root/.ollama
     entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 4 && ollama pull ${OLLAMA_MODEL:-qwen2.5:7b} && wait"]
