@@ -519,7 +519,10 @@ export default function GraphCanvas({
         {data.groups.map((g, i) => (
           <span className="k" key={g.key}><i style={{ background: `var(${GVARS[Math.min(i, 3)]})` }} />{g.label}</span>
         ))}
-        <span>● larger = more connected{hasChurn && colorBy === "churn" ? " · darker = more changed" : ""}</span>
+        <span>
+          ● larger = more connected
+          {hasChurn && colorBy === "churn" ? " · gold intensity = how often it's changed" : ""}
+        </span>
         {data.truncated && (
           <span className="g-truncated" title="Refine a filter (a directory, or fewer tests) to see more.">
             showing {data.nodes.length} of {data.total_nodes}
