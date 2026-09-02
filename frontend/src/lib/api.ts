@@ -2,7 +2,7 @@ import type {
   ArchDelta, ArchRefs,
   Architecture, AskResult, Codemap, CodemapEdge, CodemapNode, Communities, ConfluenceJob,
   ConversationDetail, ConversationKind, ConversationSummary, Coupling, DeadCode, Entrypoint,
-  FileBlame, FileContent, FlowData, FolderHeat, GraphData, HistoryTurn, Impact, Integrations, InvestigateResult,
+  FileBlame, FileContent, FlowData, FolderHeat, GraphData, GraphOptions, HistoryTurn, Impact, Integrations, InvestigateResult,
   JiraTicketJob, Overview, Repo, RepoJob, SearchResponse, SimulationTrace, Status, Stream,
   StreamEvent, SymbolDetail, SymbolIndexEntry, TreeFile, User, WeaknessList, WeaknessScanJob, Wiki,
 } from "./types";
@@ -77,8 +77,16 @@ export const api = {
   blame: (path: string) => get<FileBlame>(`/api/blame?path=${q(path)}`),
   symbol: (id: number) => get<SymbolDetail>(`/api/symbol/${id}`),
   symbolIndex: () => get<{ symbols: SymbolIndexEntry[] }>("/api/symbols/index"),
-  graph: (level: "file" | "symbol" = "file", scope?: string, neighbors = false) =>
-    get<GraphData>(`/api/graph?level=${level}${scope ? `&scope=${q(scope)}` : ""}${neighbors ? "&neighbors=true" : ""}`),
+  graph: (opts: GraphOptions = {}) => {
+    const p = new URLSearchParams({ level: opts.level ?? "file" });
+    if (opts.scope) p.set("scope", opts.scope);
+    if (opts.neighbors) p.set("neighbors", "true");
+    if (opts.tests) p.set("tests", "true");
+    if (opts.minWeight != null) p.set("min_weight", String(opts.minWeight));
+    if (opts.maxNodes != null) p.set("max_nodes", String(opts.maxNodes));
+    if (opts.groupBy) p.set("group_by", opts.groupBy);
+    return get<GraphData>(`/api/graph?${p.toString()}`);
+  },
   entrypoints: () => get<{ entrypoints: Entrypoint[] }>("/api/entrypoints"),
   wiki: () => get<Wiki>("/api/wiki"),
   folders: () => get<FolderHeat>("/api/folders"),

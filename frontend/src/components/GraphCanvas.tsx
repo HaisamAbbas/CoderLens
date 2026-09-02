@@ -32,8 +32,39 @@ function shortestPath(data: GraphData, start: GraphNode["id"], end: GraphNode["i
   return path.reverse();
 }
 
+/** Blend two "r,g,b" strings by t in [0,1]. Used for the churn heat scale —
+ *  canvas fillStyle needs a color it can use every frame, and resolving
+ *  CSS custom properties + color-mix() once per draw call (nodes.length
+ *  times, 60fps) is real, avoidable work compared to a plain lerp. */
+function lerpRgb(a: [number, number, number], b: [number, number, number], t: number): string {
+  const r = Math.round(a[0] + (b[0] - a[0]) * t);
+  const g = Math.round(a[1] + (b[1] - a[1]) * t);
+  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+function parseRgb(cssColor: string): [number, number, number] {
+  // getComputedStyle resolves --warn/--surface etc to "rgb(r, g, b)" (or hex
+  // in some engines) — handle both without pulling in a color-parsing lib.
+  const m = cssColor.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+  const hex = cssColor.replace("#", "");
+  if (hex.length === 6) return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+  return [136, 136, 136];
+}
+
+export interface GraphFilters {
+  level: "file" | "symbol";
+  tests: boolean;
+  scope: string;
+  minWeight: number;
+  groupBy: "dir" | "community";
+  dirs: string[];
+  onChange: (patch: Partial<{ level: "file" | "symbol"; tests: boolean; scope: string; minWeight: number; groupBy: "dir" | "community" }>) => void;
+}
+
 export default function GraphCanvas({
-  data, onOpenFile, onNode, onDrill, onBack, crumb, onOpenSymbol,
+  data, onOpenFile, onNode, onDrill, onBack, crumb, onOpenSymbol, initialFocus, filters,
 }: {
   data: GraphData;
   onOpenFile?: (path: string) => void;
@@ -42,6 +73,10 @@ export default function GraphCanvas({
   onBack?: () => void;
   crumb?: string;
   onOpenSymbol?: (id: number, file: string) => void;
+  /** Deep-link support — a node id (from Reader/Search's "Open in Graph")
+   *  to select and isolate as soon as the data carrying it has loaded. */
+  initialFocus?: string | number | null;
+  filters?: GraphFilters;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const S = useRef<any>({});
@@ -55,6 +90,7 @@ export default function GraphCanvas({
   // Path finder: a separate mode from normal selection — "armed" means the
   // next canvas click sets that endpoint instead of selecting a node.
   const [pathOpen, setPathOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [armed, setArmed] = useState<"start" | "end" | null>(null);
   const [pathEnds, setPathEnds] = useState<{ start: GraphNode | null; end: GraphNode | null }>({ start: null, end: null });
   const armedRef = useRef(armed); armedRef.current = armed;
@@ -74,8 +110,45 @@ export default function GraphCanvas({
   useEffect(() => { pathRef.current = path; }, [path]);
   const clearPath = () => { setPathEnds({ start: null, end: null }); setArmed(null); };
 
+  // Search: client-side over the already-loaded nodes, so it highlights as
+  // you type with no round trip. Dims everything else, same visual language
+  // as "select a node" / "show a path."
+  const [search, setSearch] = useState("");
+  const searchRef = useRef(search); searchRef.current = search;
+  const matchIds = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return null;
+    return new Set(
+      data.nodes.filter((n) => n.label.toLowerCase().includes(term) || n.meta.toLowerCase().includes(term))
+        .map((n) => n.id)
+    );
+  }, [data, search]);
+  const matchRef = useRef(matchIds); useEffect(() => { matchRef.current = matchIds; }, [matchIds]);
+
+  // Color nodes by risk (churn) instead of by module/community — a purely
+  // client-side rendering choice, no refetch needed either way.
+  const [colorBy, setColorBy] = useState<"group" | "churn">("group");
+  const colorByRef = useRef(colorBy); colorByRef.current = colorBy;
+  const hasChurn = useMemo(() => data.nodes.some((n) => (n.churn ?? 0) > 0), [data]);
+
   const byId = useMemo(() => new Map(data.nodes.map((n) => [n.id, n])), [data]);
   const groupIdx = (k: string) => { const i = data.groups.findIndex((g) => g.key === k); return i < 0 ? 3 : Math.min(i, 3); };
+
+  // Deep link: select + isolate the requested node once, the first time it
+  // shows up in a loaded dataset (a fresh nav from Reader/Search) — never
+  // re-trigger on a later re-render of the SAME data (e.g. after the user
+  // has already cleared the isolation themselves).
+  const appliedFocusRef = useRef<string | number | null>(null);
+  useEffect(() => {
+    if (initialFocus == null || appliedFocusRef.current === initialFocus) return;
+    const n = byId.get(initialFocus);
+    if (n) {
+      appliedFocusRef.current = initialFocus;
+      pick(n);
+      setFocus(n.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, initialFocus]);
 
   useEffect(() => {
     const cv = canvasRef.current!;
@@ -96,11 +169,15 @@ export default function GraphCanvas({
     const links = srcLinks.map((l) => ({ s: map.get(l.source)!, t: map.get(l.target)!, w: l.weight || 1 }))
       .filter((l) => l.s && l.t);
     const maxDeg = Math.max(1, ...nodes.map((n) => n.degree));
+    const maxChurn = Math.max(1, ...nodes.map((n) => n.churn ?? 0));
     const radius = (n: SimNode) => 4 + Math.sqrt(n.degree) * 1.8;
 
     let W = 0, H = 0, DPR = 1;
     const view = { scale: 1, px: 0, py: 0 };
-    let colors = { list: ["#888", "#888", "#888", "#888"], ink: "#000", surface: "#fff", hair: "#ccc", accent: "#4c8dff" };
+    let colors = {
+      list: ["#888", "#888", "#888", "#888"], ink: "#000", surface: "#fff", hair: "#ccc", accent: "#4c8dff",
+      churnLo: [136, 136, 136] as [number, number, number], churnHi: [136, 136, 136] as [number, number, number],
+    };
     const readColors = () => {
       const cs = getComputedStyle(document.documentElement);
       colors = {
@@ -109,9 +186,17 @@ export default function GraphCanvas({
         surface: cs.getPropertyValue("--surface").trim(),
         hair: cs.getPropertyValue("--border-strong").trim(),
         accent: cs.getPropertyValue("--accent").trim(),
+        churnLo: parseRgb(cs.getPropertyValue("--surface-2").trim() || cs.getPropertyValue("--surface").trim()),
+        churnHi: parseRgb(cs.getPropertyValue("--warn").trim()),
       };
     };
-    const colorOf = (n: GraphNode) => colors.list[groupIdx(n.group)];
+    const colorOf = (n: GraphNode) => {
+      if (colorByRef.current === "churn") {
+        const t = Math.min(1, (n.churn ?? 0) / maxChurn);
+        return lerpRgb(colors.churnLo, colors.churnHi, t);
+      }
+      return colors.list[groupIdx(n.group)];
+    };
 
     const size = () => {
       const r = cv.parentElement!.getBoundingClientRect();
@@ -154,6 +239,23 @@ export default function GraphCanvas({
       links.forEach((l) => { if (l.s.id === id) s.add(l.t.id); if (l.t.id === id) s.add(l.s.id); });
       return s;
     };
+    // Small filled triangle at the target end of an edge, pulled back so its
+    // tip touches the node's rim rather than its center — edges are directed
+    // (A imports/calls B) but used to render identically either way.
+    const drawArrow = (ax: number, ay: number, bx: number, by: number, targetR: number, color: string) => {
+      const dx = bx - ax, dy = by - ay, len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / len, uy = dy / len;
+      const tipX = bx - ux * (targetR + 1), tipY = by - uy * (targetR + 1);
+      const back = 6.5, spread = 2.8;
+      const baseX = tipX - ux * back, baseY = tipY - uy * back;
+      const px = -uy, py = ux;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(baseX + px * spread, baseY + py * spread);
+      ctx.lineTo(baseX - px * spread, baseY - py * spread);
+      ctx.closePath();
+      ctx.fillStyle = color; ctx.fill();
+    };
     const draw = () => {
       tick();
       ctx.clearRect(0, 0, W, H);
@@ -164,28 +266,35 @@ export default function GraphCanvas({
       const pathEdges = onPath
         ? new Set(pathIds!.slice(0, -1).map((id, i) => edgeKey(id, pathIds![i + 1])))
         : null;
+      const matches = matchRef.current;
+      const zoomFactor = Math.max(0.7, Math.min(1.4, view.scale));
       for (const l of links) {
         const a = toScreen(l.s), b = toScreen(l.t);
         let col = colors.hair, wdt = 1, al = 0.7;
-        if (pathEdges) {
+        if (matches) {
+          al = matches.has(l.s.id) && matches.has(l.t.id) ? 0.9 : 0.06;
+        } else if (pathEdges) {
           if (pathEdges.has(edgeKey(l.s.id, l.t.id))) { col = colors.accent; wdt = 2.6; al = 1; } else al = 0.1;
         } else if (sel) {
           const on = l.s.id === sel.id || l.t.id === sel.id; if (on) { col = colorOf(sel as SimNode); wdt = 1.6; al = 1; } else al = 0.12;
         }
         ctx.globalAlpha = al; ctx.strokeStyle = col; ctx.lineWidth = wdt;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        const targetR = radius(l.t) * zoomFactor;
+        drawArrow(a.x, a.y, b.x, b.y, targetR, col);
       }
       ctx.globalAlpha = 1;
       const screenPos = new Map<GraphNode["id"], { x: number; y: number; r: number }>();
       for (const n of nodes) {
-        const p = toScreen(n), r = radius(n) * Math.max(0.7, Math.min(1.4, view.scale));
+        const p = toScreen(n), r = radius(n) * zoomFactor;
         screenPos.set(n.id, { x: p.x, y: p.y, r });
-        const dim = onPath ? !onPath.has(n.id) : (sel && nb && !nb.has(n.id));
+        const dim = matches ? !matches.has(n.id) : onPath ? !onPath.has(n.id) : (sel && nb && !nb.has(n.id));
         ctx.globalAlpha = dim ? 0.25 : 1;
         ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fillStyle = colorOf(n); ctx.fill();
         const onP = onPath?.has(n.id);
-        ctx.lineWidth = n.id === sel?.id ? 2.5 : onP ? 2.2 : 1.2;
-        ctx.strokeStyle = n.id === sel?.id ? colors.ink : onP ? colors.accent : colors.surface; ctx.stroke();
+        const isMatch = matches?.has(n.id);
+        ctx.lineWidth = n.id === sel?.id ? 2.5 : onP || isMatch ? 2.2 : 1.2;
+        ctx.strokeStyle = n.id === sel?.id ? colors.ink : onP || isMatch ? colors.accent : colors.surface; ctx.stroke();
       }
 
       // Labels: drawn in a second pass, in priority order (selected first, then
@@ -195,25 +304,28 @@ export default function GraphCanvas({
       // as an illegible pile of overlapping text; now the busiest, most
       // useful labels win and the rest quietly step aside rather than collide.
       ctx.font = "11px 'IBM Plex Mono', monospace"; ctx.textAlign = "center"; ctx.textBaseline = "top";
-      const candidates = nodes.filter((n) => n.id === sel?.id || onPath?.has(n.id) || n.degree > maxDeg * 0.35);
+      const candidates = nodes.filter((n) =>
+        n.id === sel?.id || onPath?.has(n.id) || matches?.has(n.id) || n.degree > maxDeg * 0.35);
       candidates.sort((a, b) =>
         (b.id === sel?.id ? 1 : 0) - (a.id === sel?.id ? 1 : 0)
+        || ((matches?.has(b.id) ? 1 : 0) - (matches?.has(a.id) ? 1 : 0))
         || ((onPath?.has(b.id) ? 1 : 0) - (onPath?.has(a.id) ? 1 : 0))
         || b.degree - a.degree);
       const placed: { x: number; y: number; w: number; h: number }[] = [];
       const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
         a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
       for (const n of candidates) {
-        const priority = n.id === sel?.id || onPath?.has(n.id);
+        const priority = n.id === sel?.id || onPath?.has(n.id) || matches?.has(n.id);
         const pos = screenPos.get(n.id)!;
         const w = ctx.measureText(n.label).width, h = 13;
         const box = { x: pos.x - w / 2 - 2, y: pos.y + pos.r + 3, w: w + 4, h };
         if (!priority && placed.some((p) => overlaps(box, p))) continue;
         placed.push(box);
-        const dim = onPath ? !onPath.has(n.id) : (sel && nb && !nb.has(n.id));
+        const dim = matches ? !matches.has(n.id) : onPath ? !onPath.has(n.id) : (sel && nb && !nb.has(n.id));
         ctx.globalAlpha = dim ? 0.4 : 1;
         ctx.lineWidth = 3; ctx.strokeStyle = colors.surface; ctx.strokeText(n.label, pos.x, box.y);
-        ctx.fillStyle = onPath?.has(n.id) ? colors.accent : colors.ink; ctx.fillText(n.label, pos.x, box.y);
+        ctx.fillStyle = onPath?.has(n.id) || matches?.has(n.id) ? colors.accent : colors.ink;
+        ctx.fillText(n.label, pos.x, box.y);
       }
       ctx.globalAlpha = 1;
       raf = requestAnimationFrame(draw);
@@ -298,11 +410,38 @@ export default function GraphCanvas({
         {focus != null && <button className="btn" onClick={() => setFocus(null)}>← Whole graph</button>}
         <button
           className={"btn" + (pathOpen ? " primary" : "")}
-          onClick={() => { setPathOpen((v) => !v); if (!pathOpen) setArmed("start"); else clearPath(); }}
+          onClick={() => {
+            setFiltersOpen(false);
+            setPathOpen((v) => !v); if (!pathOpen) setArmed("start"); else clearPath();
+          }}
         >
           ⤳ Find path
         </button>
+        {filters && (
+          <button
+            className={"btn" + (filtersOpen ? " primary" : "")}
+            onClick={() => { setPathOpen(false); setFiltersOpen((v) => !v); }}
+          >
+            ⚙ Filters
+          </button>
+        )}
+        <div className="g-search">
+          <input
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search nodes…" spellCheck={false}
+          />
+          {search && <span className="g-search-x" onClick={() => setSearch("")}>×</span>}
+        </div>
+        {hasChurn && (
+          <button className="btn" onClick={() => setColorBy((c) => (c === "group" ? "churn" : "group"))}>
+            🎨 {colorBy === "group" ? "Color: module" : "Color: risk"}
+          </button>
+        )}
       </div>
+
+      {matchIds && (
+        <div className="g-search-count">{matchIds.size} match{matchIds.size === 1 ? "" : "es"}</div>
+      )}
 
       {pathOpen && (
         <div className="g-path">
@@ -334,11 +473,58 @@ export default function GraphCanvas({
           )}
         </div>
       )}
+
+      {filtersOpen && filters && (
+        <div className="g-path g-filters">
+          <span className="close" onClick={() => setFiltersOpen(false)}>×</span>
+          <div className="eyebrow">Filters</div>
+          <div className="gf-field">
+            <label>Level</label>
+            <div className="gf-seg">
+              <button className={filters.level === "file" ? "on" : ""} onClick={() => filters.onChange({ level: "file" })}>Files</button>
+              <button className={filters.level === "symbol" ? "on" : ""} onClick={() => filters.onChange({ level: "symbol" })}>Symbols</button>
+            </div>
+          </div>
+          <div className="gf-field">
+            <label>Directory</label>
+            <select value={filters.scope} onChange={(e) => filters.onChange({ scope: e.target.value })}>
+              <option value="">Whole repo</option>
+              {filters.dirs.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div className="gf-field gf-check">
+            <label>
+              <input type="checkbox" checked={filters.tests} onChange={(e) => filters.onChange({ tests: e.target.checked })} />
+              Include tests
+            </label>
+          </div>
+          <div className="gf-field">
+            <label>Group by</label>
+            <div className="gf-seg">
+              <button className={filters.groupBy === "dir" ? "on" : ""} onClick={() => filters.onChange({ groupBy: "dir" })}>Directory</button>
+              <button className={filters.groupBy === "community" ? "on" : ""} onClick={() => filters.onChange({ groupBy: "community" })}>Cluster</button>
+            </div>
+          </div>
+          <div className="gf-field">
+            <label>Min. connections to show an edge — {filters.minWeight}</label>
+            <input
+              type="range" min={1} max={10} value={filters.minWeight}
+              onChange={(e) => filters.onChange({ minWeight: Number(e.target.value) })}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="g-legend">
         {data.groups.map((g, i) => (
           <span className="k" key={g.key}><i style={{ background: `var(${GVARS[Math.min(i, 3)]})` }} />{g.label}</span>
         ))}
-        <span>● larger = more connected</span>
+        <span>● larger = more connected{hasChurn && colorBy === "churn" ? " · darker = more changed" : ""}</span>
+        {data.truncated && (
+          <span className="g-truncated" title="Refine a filter (a directory, or fewer tests) to see more.">
+            showing {data.nodes.length} of {data.total_nodes}
+          </span>
+        )}
       </div>
 
       {selected && detail && (

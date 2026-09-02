@@ -16,7 +16,7 @@ export default function Explorer() {
 
   const { data: graph, isLoading, error, refetch } = useQuery({
     queryKey: ["graph", "file"],
-    queryFn: () => api.graph("file"),
+    queryFn: () => api.graph({ level: "file" }),
   });
 
   const open = (path: string, line?: number) => {

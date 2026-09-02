@@ -7,7 +7,7 @@ import { emitExplain } from "../lib/explainBus";
 import CodeView from "../components/CodeView";
 import { CodeSkeleton } from "../components/PageState";
 import {
-  ArrowIcon, BookIcon, ChevronIcon, CopyIcon, CheckIcon, HistoryIcon, InboundIcon,
+  ArrowIcon, BookIcon, ChevronIcon, CopyIcon, CheckIcon, GraphIcon, HistoryIcon, InboundIcon,
   OutboundIcon, SearchIcon, SparkleIcon, SplitIcon, TargetIcon, XIcon,
 } from "../components/icons";
 import type { FileContent, SymbolDetail, SymbolIndexEntry, SymbolRef, TreeFile } from "../lib/types";
@@ -210,6 +210,16 @@ export default function Reader() {
             </span>
             <div className="rd-toolbar-actions">
               {fileQ.data && <span className="chip tnum">{fileQ.data.symbols.length} symbols · {fileQ.data.loc} loc</span>}
+              {path && (
+                <button
+                  className="rd-iconbtn"
+                  onClick={() => nav("/graph", { state: { focus: path } })}
+                  title="Open this file in the dependency graph"
+                  aria-label="Open in Graph"
+                >
+                  <GraphIcon />
+                </button>
+              )}
               {path && (
                 <button
                   className={"rd-iconbtn" + (blameOn ? " on" : "")}

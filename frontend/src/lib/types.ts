@@ -118,11 +118,18 @@ export interface SymbolDetail {
 
 export interface GraphNode {
   id: string | number; label: string; meta: string; group: string; degree: number;
-  stats: [string, string | number][]; file?: string;
+  stats: [string, string | number][]; file?: string; churn?: number;
 }
 export interface GraphLink { source: string | number; target: string | number; weight: number; }
 export interface GraphGroup { key: string; label: string; }
-export interface GraphData { nodes: GraphNode[]; links: GraphLink[]; groups: GraphGroup[]; subtitle: string; }
+export interface GraphData {
+  nodes: GraphNode[]; links: GraphLink[]; groups: GraphGroup[]; subtitle: string;
+  truncated?: boolean; total_nodes?: number;
+}
+export interface GraphOptions {
+  level?: "file" | "symbol"; scope?: string; neighbors?: boolean;
+  tests?: boolean; minWeight?: number; maxNodes?: number; groupBy?: "dir" | "community";
+}
 
 export interface Entrypoint {
   kind: string; label: string; detail: string; path: string; line: number; symbol_id: number | null;
