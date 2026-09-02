@@ -393,10 +393,9 @@ def file_blame(path: str = Query(...), user: User = CurrentUser) -> dict:
         f = s.scalar(select(File).where(File.repo_id == r.id, File.path == path))
         if f is None:
             raise HTTPException(404, f"File not found: {path}")
-        if not r.cloned_path:
-            raise HTTPException(404, "No local clone available for blame.")
+        clone_path = _clone_path(s, r, user)
         try:
-            lines = blame_file(r.cloned_path, path)
+            lines = blame_file(str(clone_path), path)
         except Exception as exc:
             raise HTTPException(404, f"Blame unavailable: {exc}") from exc
         return {"path": path, "lines": lines}
@@ -506,16 +505,33 @@ def architecture(user: User = CurrentUser) -> dict:
         return build_architecture(s, r.id, r.name)
 
 
-def _clone_path(repo: Repo) -> Path:
-    """Where this repo's clone lives on disk. Reads the path the ingest
-    itself recorded (Repo.cloned_path) rather than recomputing owner/name
-    from the URL — the clone directory is namespaced per user
-    (repos/<user_id>/<owner>__<name>, see ingestion.repository.clone_or_open),
-    so recomputing it here without the user id would silently point at the
-    wrong (or another user's) directory."""
-    if not repo.cloned_path:
-        raise HTTPException(404, "No local clone available for this repo.")
-    return Path(repo.cloned_path)
+def _clone_path(session, repo: Repo, user: User) -> Path:
+    """Where this repo's clone lives on disk — self-healing.
+
+    Render's disk for repos_dir is ephemeral: a restart or redeploy wipes
+    it, but Repo.cloned_path (and everything already extracted into
+    Postgres) survives untouched, so the row looks fully ingested while the
+    actual git objects are gone. Rather than making every read-only feature
+    that needs real git history (arch-delta, blame) hard-fail until the
+    user notices and manually hits "refresh" — which re-runs the entire
+    ingest pipeline just to get a clone back — re-clone transparently here.
+    clone_or_open's destination is deterministic from (user_id, owner,
+    name), so this reproduces the exact same path Repo.cloned_path already
+    names; no DB write is needed."""
+    if repo.cloned_path and (Path(repo.cloned_path) / ".git").exists():
+        return Path(repo.cloned_path)
+    from archaeologist.ingestion.repository import clone_or_open
+
+    token = _effective_token(session, user, "")
+    repos_dir = Path(settings.repos_dir).resolve() / str(user.id)
+    try:
+        _, dest = clone_or_open(repo.url, repos_dir, token)
+    except Exception as exc:
+        raise HTTPException(
+            409, f"This repository's local clone is gone and could not be restored "
+                f"automatically: {exc}. Try refreshing the repo from Settings."
+        ) from exc
+    return dest
 
 
 @router.get("/architecture/refs")
@@ -525,7 +541,7 @@ def architecture_refs(user: User = CurrentUser) -> dict:
 
     with session_scope() as s:
         r = _repo(s, user)
-        path = _clone_path(r)
+        path = _clone_path(s, r, user)
     try:
         return arch_delta.list_refs(arch_delta.open_repo(path))
     except RuntimeError as exc:
@@ -547,7 +563,7 @@ def architecture_delta(
 
     with session_scope() as s:
         r = _repo(s, user)
-        path = _clone_path(r)
+        path = _clone_path(s, r, user)
         repo_id, head_sha = r.id, r.head_sha
         try:
             result = arch_delta.build_delta(path, base, head)
