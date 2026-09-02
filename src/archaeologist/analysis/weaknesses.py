@@ -204,8 +204,12 @@ def _scan_file(file: File, user_id: int | None = None) -> tuple[list[dict], int,
         "incomplete code, or end-of-file syntax errors as findings."
         if truncated else ""
     )
-    fenced = f"```{_lang_of(file.path)}\n{body}\n```{trunc_note}"
-    user = f"File: {file.path}\n\n{as_untrusted(fenced, 'file')}"
+    # file.path is repo-controlled (an attacker can name a file anything) —
+    # it used to sit outside the untrusted boundary, reading as trusted
+    # context ("File: <injection text>.py") to the model. Wrapped together
+    # with the code now, same as every other repo-derived string here.
+    fenced = f"File: {file.path}\n\n```{_lang_of(file.path)}\n{body}\n```{trunc_note}"
+    user = as_untrusted(fenced, "file")
     try:
         raw = call_llm(WEAKNESS_SYS, user, max_tokens=1500, temperature=0.1,
                        label="weakness-scan", user_id=user_id)

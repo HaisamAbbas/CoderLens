@@ -63,11 +63,17 @@ def build_prompt(
 ) -> str:
     parts = ["# Evidence\n"]
     for i, e in enumerate(evidence, 1):
-        header = f"[{i}] ({e['stream']}) {e['citation']}"
+        # e['citation']/e['title'] are repo-derived (a file path, a symbol or
+        # doc title) — an attacker can control both. Only the bracketed index
+        # stays outside the boundary (it's how the model is asked to cite
+        # sources, not repo content); citation, title, and body are wrapped
+        # together, not just body alone.
+        citation = f"({e['stream']}) {e['citation']}"
         if e.get("title"):
-            header += f" — {e['title']}"
+            citation += f" — {e['title']}"
         body = e.get("body") or e.get("snippet") or ""
-        parts.append(f"{header}\n{as_untrusted(body, 'evidence')}\n")
+        block = f"{citation}\n{body}" if body else citation
+        parts.append(f"[{i}] {as_untrusted(block, 'evidence')}\n")
     if history:
         recent = history[-MAX_HISTORY_TURNS:]
         lines = [f"Q: {h.get('question', '')}\nA: {h.get('answer', '')}" for h in recent if h.get("question")]

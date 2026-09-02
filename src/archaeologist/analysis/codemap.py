@@ -370,11 +370,19 @@ def explain_edge(source_id: int, target_id: int, question: str = "", user_id: in
         if not llm_available():
             return {"text": fallback}
         snippet = _snippet(session, src)
-        user = (
+        # qualified_name/kind/file_path are repo-derived (an attacker names
+        # their own symbols/files) — wrapped together with the source
+        # snippet now, not left outside as trusted-looking context lines.
+        # `question` stays outside: it's the signed-in user's own typed
+        # text, not repo content.
+        repo_info = (
             f"Caller: {src.qualified_name} ({src.kind}) at {src.file_path}:{src.start_line}\n"
             f"Callee: {dst.qualified_name} ({dst.kind}) at {dst.file_path}:{dst.start_line}\n"
-            + (f"Follow-up context (the original question this map answers): {question}\n" if question else "")
-            + f"\nCaller's source code:\n{as_untrusted(snippet, 'source')}"
+            f"\nCaller's source code:\n{snippet}"
+        )
+        user = (
+            (f"Follow-up context (the original question this map answers): {question}\n\n" if question else "")
+            + as_untrusted(repo_info, "source")
         )
     try:
         text = call_llm(EXPLAIN_EDGE_SYS, user, max_tokens=200, label="codemap-explain-edge",
