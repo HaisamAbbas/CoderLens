@@ -209,9 +209,8 @@ function CouplingCard({
           <div className="co-pair" key={p.a + p.b}>
             <div className="co-top">
               <div className="co-files">
-                <span className="co-f" onClick={() => onOpen(p.a)}>{short(p.a)}</span>
-                <span className="co-x">↔</span>
-                <span className="co-f" onClick={() => onOpen(p.b)}>{short(p.b)}</span>
+                <span className="co-f" onClick={() => onOpen(p.a)} title={p.a}>{short(p.a)}</span>
+                <span className="co-f" onClick={() => onOpen(p.b)} title={p.b}><span className="co-x">↔</span>{short(p.b)}</span>
               </div>
               <span className="co-badge tnum">{p.co_changes}×</span>
             </div>

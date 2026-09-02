@@ -140,24 +140,35 @@
 
 /* Change coupling — a two-up grid of pair cards, each with a small relative-
    magnitude bar (data-viz flourish, not just a bare count) instead of one
-   file-per-row list. */
-.co-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+   file-per-row list.
+
+   Grid tracks default to a minimum basis of the content's intrinsic width —
+   a plain "1fr 1fr" lets one long file path force its whole column (and so
+   the card, and the page) wider than the viewport, needing a horizontal
+   scrollbar. minmax(0, 1fr) below removes that floor; each filename is also
+   truncated on its OWN line (never side by side) so a long path clips with
+   an ellipsis instead of stretching its row. */
+.co-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-top: 12px; }
 .co-pair {
   display: flex; flex-direction: column; gap: 8px; padding: 10px 11px; border-radius: var(--r-sm);
   background: var(--card-bg); border: 1px solid var(--card-border); box-shadow: var(--card-glow);
+  min-width: 0; overflow: hidden;
 }
-.co-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.co-files { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
-.co-f { font-family: var(--font-mono); font-size: 11.5px; color: var(--text); cursor: pointer; }
+.co-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
+.co-files { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.co-f {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--text); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
 .co-f:hover { color: var(--accent); }
-.co-x { color: var(--text-3); font-size: 10px; flex-shrink: 0; }
+.co-x { color: var(--text-3); font-size: 10px; margin-right: 5px; }
 .co-badge {
   flex-shrink: 0; font-size: 10.5px; color: var(--accent); background: var(--accent-soft);
   border-radius: 999px; padding: 1px 7px; font-weight: 600;
 }
 .co-bar { height: 4px; border-radius: 999px; background: var(--inset); overflow: hidden; }
 .co-bar span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
-@media (max-width: 560px) { .co-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .co-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* Entrypoints — category tiles (one per kind, with a count and a couple of
    named examples) instead of a full nested list of every entrypoint. This
