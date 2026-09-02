@@ -240,8 +240,16 @@ class Settings(BaseSettings):
         string printed in this file and in compose.yml — public, guessable
         in one attempt. All three are development-only escape hatches:
         outside development, refuse to start rather than leave any of them
-        open in whatever calls itself "production" here."""
-        if self.app_env == "development":
+        open in whatever calls itself "production" here.
+
+        The bypass below is gated on a SECOND, independent signal beyond
+        app_env alone: FRONTEND_DIST is empty in local dev (discovered via
+        a __file__-relative path instead) and always explicitly set inside
+        the Docker image (see main.py's own comment on this). A real deploy
+        that forgot to set APP_ENV=production — the one misconfiguration
+        this whole check exists to catch — still has FRONTEND_DIST baked
+        into it either way, so it still gets caught here."""
+        if self.app_env == "development" and not self.frontend_dist:
             return self
         if len(self.session_secret) < 32:
             raise ValueError(
